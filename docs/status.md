@@ -8,13 +8,13 @@
 
 ## Project State
 
-| Component | Status | Notes |
-|-----------|--------|-------|
-| Design Document | ✅ Complete | Architecture and feature design |
-| Decisions Summary | ✅ Complete | All decisions finalized |
-| Design Review | ✅ Complete | Schema specification |
-| Project Structure | 🔴 Not Started | Ready to initialize |
-| Core Implementation | 🔴 Not Started | - |
+| Component           | Status         | Notes                           |
+|---------------------|----------------|---------------------------------|
+| Design Document     | ✅ Complete     | Architecture and feature design |
+| Decisions Summary   | ✅ Complete     | All decisions finalized         |
+| Design Review       | ✅ Complete     | Schema specification            |
+| Project Structure   | 🔴 Not Started | Ready to initialize             |
+| Core Implementation | 🔴 Not Started | -                               |
 
 ## Key Documents
 
@@ -32,22 +32,22 @@
 
 ## Key Decisions Summary
 
-| Area | Decision |
-|------|----------|
-| UI | Tree + Dependency Panel (React, TypeScript, Tailwind) |
-| Backend | FastAPI + Python 3.11+ |
-| LLM | Direct OpenAI API with abstraction layer |
-| LLM Config | Tool-level in `~/.storyforge/providers/` |
-| Storage | Single YAML file with schema versioning |
-| Blocks | Pipeline within each block (raw → refined → grammar → final → summary) |
-| Versions | Per-stage versioning (v1, v2...), user selects active version |
-| CLI | None (UI-only) |
+| Area        | Decision                                                          |
+|-------------|-------------------------------------------------------------------|
+| UI          | Tree + Dependency Panel (React, TypeScript, Tailwind)             |
+| Backend     | FastAPI + Python 3.11+                                            |
+| LLM         | Direct OpenAI API with abstraction layer                          |
+| LLM Config  | Tool-level in `~/.storyforge/providers/`                          |
+| Storage     | Single YAML file with schema versioning                           |
+| Blocks      | Dictionary of stages, each with input/selected/output             |
+| Versions    | Per-stage versioning (v1, v2...), user selects active version     |
+| CLI         | None (UI-only)                                                    |
 
 ## Nice-to-Have Features (P2)
 
-| Feature | Notes |
-|---------|-------|
-| Undo/Redo | Project snapshots or command history |
-| Multi-project | Open two projects for copying content |
-| Multiple LLM Providers | Add Anthropic, Ollama via abstraction layer |
+| Feature                   | Notes                                           |
+|---------------------------|-------------------------------------------------|
+| Undo/Redo                 | Project snapshots or command history            |
+| Multi-project             | Open two projects for copying content           |
+| Multiple LLM Providers    | Add Anthropic, Ollama via abstraction layer     |
 

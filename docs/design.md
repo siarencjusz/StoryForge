@@ -42,36 +42,34 @@ Writers using LLMs for assistance face several challenges:
 The primary interface is a tree-based layout with three panels:
 
 ```
-┌──────────────────┬────────────────────────────────┬──────────────────┐
-│ 📁 Characters    │                                │ Dependencies     │
-│   📄 alice       │  # Alice                       │                  │
-│   📄 shadow      │                                │ Uses:            │
-│ 📁 Locations     │  [generate_character]          │  → generate_char │
-│   📄 forest      │                                │                  │
-│   📄 shadow      │  A former ranger who tracks    │ Used by:         │
-│ 📁 Scenes        │  criminals in the Whisperwood  │  ← chapter_1     │
-│   📄 ch1_scene1  │                                │  ← chapter_2     │
-│   📄 ch1_scene2  │  ───────────────────────────   │                  │
-│ 📁 Instructions  │                                │ Token Info:      │
-│   📄 gen_char    │  **Output** (v3, 520 tokens)   │  Input: 245      │
-│   📄 gen_scene   │                                │  Output: 520     │
-│                  │  Alice Thornwood, 28 years     │  Summary: 12     │
-│ [+ New Block]    │  old, stands at the edge of    │                  │
-│                  │  the Whisperwood...            │ [🔄 Regenerate]  │
-│ Filter: All ▼    │                                │                  │
-│ 🔍 Search...     │  ───────────────────────────   │                  │
-│                  │                                │                  │
-│                  │  **Summary** (12 tokens)       │                  │
-│                  │  Alice - 28yo ranger,          │                  │
-│                  │  distrusts magic               │                  │
-└──────────────────┴────────────────────────────────┴──────────────────┘
-     Tree Panel              Editor Panel            Dependency Panel
+┌──────────────────┬────────────────────────────────────────┬──────────────────┐
+│ 📁 Characters    │  # Alice (raw stage)                   │ Dependencies     │
+│   📄 alice       │                                        │                  │
+│   📄 shadow      │  INPUT:                                │ Uses:            │
+│ 📁 Locations     │  ### INSTRUCTION:                      │  → prompts:      │
+│   📄 forest      │  [prompts:generate_character]          │     generate_char│
+│   📄 shadow      │  ### INPUT:                            │  → prompts:      │
+│ 📁 Scenes        │  A former ranger who tracks            │     world_rules  │
+│   📄 ch1_scene1  │  criminals in the Whisperwood          │                  │
+│   📄 ch1_scene2  │  ### RESPONSE:                         │ Used by:         │
+│ 📁 Prompts       │                                        │  ← scene:ch1     │
+│   📄 gen_char    │  ───────────────────────────           │  ← alice:summary │
+│   📄 gen_scene   │                                        │                  │
+│                  │  OUTPUT (v2 selected, 520 tokens)      │ Token Info:      │
+│ [+ New Block]    │                                        │  Input: 245      │
+│                  │  Alice Thornwood, 28 years             │  Output: 520     │
+│ Filter: All ▼    │  old, stands at the edge of            │                  │
+│ 🔍 Search...     │  the Whisperwood...                    │ [🔄 Regenerate]  │
+│                  │                                        │                  │
+│                  │  [v1] [v2 ✓] [+ New]                   │                  │
+└──────────────────┴────────────────────────────────────────┴──────────────────┘
+     Tree Panel              Editor Panel                   Dependency Panel
 ```
 
 **Three Panels**:
 1. **Tree Panel (Left)**: Category folders containing blocks, search/filter
-2. **Editor Panel (Center)**: Input prompt, output, summary, version selector
-3. **Dependency Panel (Right)**: Shows "Uses" and "Used by" relationships, token info, actions
+2. **Editor Panel (Center)**: Stage input, output versions, version selector
+3. **Dependency Panel (Right)**: Shows "Uses" and "Used by" relationships, token info (runtime), actions
 
 **Key Benefits**:
 - Familiar UX (like VS Code, file managers)
@@ -82,62 +80,67 @@ The primary interface is a tree-based layout with three panels:
 
 ### Blocks
 
-A **Block** is the fundamental unit of work. Each block has:
+A **Block** is the fundamental unit of work. All content (prompts, characters, scenes, locations) uses the same block structure.
 
-| Component | Description |
-|-----------|-------------|
-| **Tag** | Identifier unique within its category (e.g., `alice` in `character` category) |
-| **Category** | Required grouping (e.g., `character`, `location`, `scene`, `plot`) - forms folder in tree |
-| **Input/Prompt** | The instruction or prompt text, may include references to other tags |
-| **Output** | The generated content (can have multiple versions) |
-| **Summary** | Optional condensed version of the output for context efficiency |
-| **Token Count** | Automatically calculated tokens for input, output, and summary (displayed to user) |
-| **Metadata** | Type hints, creation date, version history, notes |
+| Component        | Description                                                                                  |
+|------------------|----------------------------------------------------------------------------------------------|
+| **Block Name**   | Identifier unique within its category (e.g., `alice` in `character` category)                |
+| **Category**     | Required grouping (e.g., `character`, `location`, `scene`, `prompts`) - forms folder in tree |
+| **Stages**       | Dictionary of processing stages (e.g., `raw`, `refined`, `summary`)                          |
+| **Stage Input**  | Each stage has its own prompt, may include `[block_name]` references                         |
+| **Stage Output** | Dictionary of versions (version key → content string)                                        |
+| **Selected**     | Which version is active for each stage                                                       |
+
+**Note**: Token counts are calculated at runtime (depend on tokenizer/LLM), not stored.
+
+**See [schemas/schema_v1.md](./schemas/schema_v1.md) for complete YAML examples.**
 
 #### Block Types
 
-1. **Instruction Block**: Contains reusable prompt templates (stored in separate `instructions` section). Referenced by name in block's `instruction` or `pipeline` fields. No LLM call on its own.
-2. **Generation Block**: Calls LLM with input to produce output through a processing pipeline
-3. **Content Block**: Static content (notes, raw text, world facts) - no LLM processing
+1. **Simple Block** (prompts, static content): Has only `output` field with versions
+2. **Block with Stages** (characters, scenes): Has multiple stages, each with `input`, `selected`, `output`
+
+For complete YAML examples, see [schemas/schema_v1.md](./schemas/schema_v1.md).
 
 ### Block Processing Pipeline
 
-Each block contains its own processing pipeline. Every pipeline stage stores multiple versions independently.
+Each block is a dictionary of stages. Each stage has its own input, selected version, and output versions.
 
 ```
-BLOCK (category:tag)
+BLOCK (category:block_name)
 │
-├── instruction          → references an instruction template
-├── input/context        → user prompt + [tag] references to other blocks
-│
-└── pipeline stages (each with independently versioned outputs)
+└── stages (each with its own input and versioned outputs)
     │
-    ├── raw              → initial LLM generation
-    │   ├── v1 (selected ✓)
-    │   ├── v2
-    │   └── v3
+    ├── raw
+    │   ├── input: "### INSTRUCTION:\n[prompts:generate_character]\n..."
+    │   ├── selected: v2
+    │   └── output:
+    │       ├── v1: "..."
+    │       └── v2: "..."
     │
-    ├── refined          → improved/expanded output
-    │   ├── v1 (selected ✓)
-    │   └── v2
+    ├── refined
+    │   ├── input: "Improve depth.\n[alice:raw]"
+    │   ├── selected: v1
+    │   └── output:
+    │       └── v1: "..."
     │
-    ├── grammar          → polished for spelling/style
-    │   └── v1 (selected ✓)
-    │
-    ├── final            → used when referenced as [tag:full]
-    │   └── v1 (selected ✓)
-    │
-    └── summary          → used when referenced as [tag:summary]
-        ├── v1
-        └── v2 (selected ✓)
+    └── summary
+        ├── input: "Summarize in 2-3 sentences.\n[alice:refined]"
+        ├── selected: v1
+        └── output:
+            └── v1: "..."
 ```
 
 **Key Points**:
-- Pipeline is **within each block**, not a separate entity
-- Each stage stores **multiple versions** (auto-increment v1, v2... or user-named)
+- Block is directly a **dictionary of stages** (no `pipeline` wrapper)
+- Each stage has its **own input** (no block-level input)
+- Stages can reference other stages: `[alice:raw]`, `[alice:refined]`
+- Each stage stores **multiple versions** (v1, v2... or user-named)
 - User marks which version is **"selected"** per stage
-- When another block references `[tag:full]`, it gets the selected version of `final` stage
-- User controls which stages to generate—no concept of "optional", just generate what you need
+- Versions are **simple strings** (not objects with metadata)
+- User controls which stages to create—no fixed pipeline
+
+For complete YAML examples, see [schemas/schema_v1.md](./schemas/schema_v1.md).
 
 ### Version Management
 
@@ -147,7 +150,6 @@ BLOCK (category:tag)
 ├──────────────────────────────────────────────────────────────────────────┤
 │  ┌─────────────────────────┐    ┌─────────────────────────┐             │
 │  │ **v1** (selected ✓)     │    │ **v2**                  │             │
-│  │ Jan 28, 10:20           │    │ Jan 28, 10:25           │             │
 │  ├─────────────────────────┤    ├─────────────────────────┤             │
 │  │ Alice Thornwood, 28     │    │ Alice "Thorn" is a      │             │
 │  │ years old, stands at    │    │ twenty-eight year old   │             │
@@ -158,106 +160,63 @@ BLOCK (category:tag)
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
+- Versions are **simple strings** (version key → content)
 - Compare any two versions side-by-side
 - Select which version to use as the stage output
 - Create new version by editing or regenerating
 - User can manually edit any version to merge best parts
+- Token counts calculated and displayed at runtime (not stored)
 
-### Tag Uniqueness & References
+### Block Name Uniqueness & References
 
 **Uniqueness Rules**:
-- Tags must be unique **within a category** (not globally)
-- `[category:tag]` forms the unique composite key
+- Block names must be unique **within a category** (not globally)
+- `[category:block_name]` forms the unique composite key
 - Example: `[character:shadow]` and `[location:shadow]` can coexist
 
 **Reference Syntax**:
 ```
-[tag]                  → Works if tag is unique across ALL categories, uses default mode
-[category:tag]         → Explicit category, uses default mode
-[tag:full]             → Short form, uses final stage output
-[tag:summary]          → Short form, uses summary stage output
-[category:tag:full]    → Explicit category + full output
-[category:tag:summary] → Explicit category + summary output
+[block_name]                  → Works if unique across ALL categories, uses default stage
+[category:block_name]         → Explicit category, uses default stage
+[block_name:stage]            → Explicit stage (e.g., [alice:summary])
+[category:block_name:stage]   → Explicit category + stage (e.g., [character:alice:raw])
 ```
 
+**Stage References**:
+- `[alice:raw]` → selected version from alice's raw stage
+- `[alice:summary]` → selected version from alice's summary stage
+- Default stage is configurable per project (usually `summary` or last stage)
+
 **Ambiguity Handling**:
-- If `[shadow]` exists in both `character` and `location`, using `[shadow]` is an error
+- If `shadow` exists in both `character` and `location`, using `[shadow]` is an error
 - UI prompts user to disambiguate: use `[character:shadow]` or `[location:shadow]`
 - When a new block creates ambiguity, UI offers to update existing short references
 
 **Rename Behavior**:
-- Renaming a tag automatically updates ALL references across all blocks
-- Cannot rename to a tag that already exists in the same category
-- Moving to a different category is allowed (changes the category field)
+- Renaming a block automatically updates ALL references across all blocks
+- Cannot rename to a name that already exists in the same category
+- Moving to a different category is allowed
 
 
-#### Instruction Library Example
+#### Prompt Library
 
-Instruction blocks form a reusable library of prompts:
+Prompts are blocks in the `prompts` category (or any category you choose). They are referenced like any other block: `[prompts:generate_character]`
 
-```
-[generate_character] (Instruction Block, category: template)
-─────────────────────────────────────────────────────────────
-Create a detailed character sheet including:
-- Name and aliases
-- Physical appearance  
-- Personality traits and flaws
-- Background and key life events
-- Goals and motivations
+For YAML examples, see [schemas/schema_v1.md](./schemas/schema_v1.md).
 
-[generate_scene] (Instruction Block, category: template)
-─────────────────────────────────────────────────────────────
-Write a vivid scene with:
-- Setting description and atmosphere
-- Character actions and dialogue
-- Sensory details (sight, sound, smell)
-- Emotional undertones
-- Clear scene goal/purpose
-```
+#### Content Blocks
 
-#### Content Block Examples
+Content blocks can be:
+- **Static content** (locations, world facts): Has only `output` with versions
+- **Generated content** (characters, scenes): Has multiple stages with `input`/`output`
 
-```
-[forest] (Content Block, category: location)
-─────────────────────────────────────────────────────────────
-The Whisperwood - an ancient forest where the trees are said 
-to hold memories. Perpetual twilight under the canopy, 
-bioluminescent fungi light the paths. Dangerous at night.
-Tokens: 42
+For YAML examples, see [schemas/schema_v1.md](./schemas/schema_v1.md).
 
-[alice] (Generation Block, category: character)
-─────────────────────────────────────────────────────────────
-OUTPUT: Alice Thornwood, 28, former ranger...
-SUMMARY: Alice - 28yo ranger, tracks criminals, distrusts magic
-Tokens: output=320, summary=18
-```
+#### Scene Generation
 
-#### Scene Generation Example
+Scenes compose prompts, locations, and characters by referencing them. The user sees token counts **at runtime** (calculated, not stored), allowing them to switch between `:raw` and `:summary` to optimize context usage.
 
-This shows how instructions, locations, and characters compose:
-
-```
-[chapter_2_scene_1] (Generation Block, category: scene)
-─────────────────────────────────────────────────────────────
-[generate_scene]
-
-Locations: [forest:full], [castle:summary]
-Characters: [alice:full], [bob:summary]
-
-Alice confronts Bob at the edge of the Whisperwood about 
-his secret meetings with the castle guards. Tension rises 
-as Bob reveals he's been protecting her from the King's spies.
-
-───────────────────────────────────────────────────────────
-RESOLVED INPUT (shown to user before generation):
-  Instructions: 245 tokens
-  Locations: 89 tokens  
-  Characters: 412 tokens
-  User prompt: 52 tokens
-  TOTAL: 798 tokens ✓ (within context limit)
-```
-
-The user sees token counts **before** generating, allowing them to switch from `[alice:full]` to `[alice:summary]` if context is too large.
+For YAML examples, see [schemas/schema_v1.md](./schemas/schema_v1.md).
 
 ### Generation Flow
 
@@ -288,22 +247,19 @@ The user sees token counts **before** generating, allowing them to switch from `
 
 ### Story Project (Single YAML File)
 
-The entire project is stored in a single `project.yaml` file.
+The entire project is stored in a single YAML file using nested dictionaries.
 
 **See [schemas/schema_v1.md](./schemas/schema_v1.md) for complete schema documentation.**
 
-Quick overview of top-level structure:
-```yaml
-storyforge: "1.0"
-schema_version: 1
-
-project: { title, author, genre, created, modified }
-settings: { llm_provider, default_reference_mode, unresolved_references }
-categories: [ { name, color }, ... ]
-instructions: [ { tag, description, content }, ... ]
-blocks: [ { category, tag, type, instruction, input, pipeline, ... }, ... ]
-tree: { expanded_categories, selected_block }
+Key structure:
 ```
+yaml root → blocks → category → block_name → stage → [input, selected, output → versions]
+```
+
+- No redundant IDs - dictionary keys provide uniqueness
+- Loads directly as Python nested dictionaries
+- `blocks[category][block_name][stage]` for direct access
+- Versions are simple strings (not metadata objects)
 
 ### Dependency Graph
 
@@ -321,7 +277,6 @@ This graph enables:
 - Visualization of content relationships
 - Impact analysis (what breaks if I change X?)
 - Regeneration cascades (optionally regenerate dependent blocks)
-- Cycle detection (prevent circular references)
 
 ---
 
@@ -358,34 +313,32 @@ This graph enables:
 
 #### 1. Block Manager
 - CRUD operations for blocks
-- Block type validation
 - Tag uniqueness enforcement (within category)
-- Category management
-- Block metadata management
+- Category management (implicit from structure)
+- Stage management (add/remove/rename stages)
 - Rename with reference propagation
 
 #### 2. Reference Resolver
-- Parse `[tag]` and `[category:tag]` references in input text
+- Parse `[tag]`, `[category:tag]`, and `[tag:stage]` references in input text
 - Handle ambiguity detection and errors
-- Resolve to full output or summary based on syntax:
-  - `[tag]` → default (configurable, usually summary)
-  - `[tag:full]` → complete output
-  - `[tag:summary]` → condensed summary
-  - `[category:tag:mode]` → explicit category + mode
-- Validate references exist before generation
+- Resolve to appropriate stage based on syntax:
+  - `[tag]` → default stage (configurable, usually summary)
+  - `[tag:stage]` → specific stage (e.g., `[alice:raw]`)
+  - `[category:tag]` → explicit category, default stage
+  - `[category:tag:stage]` → explicit category + stage
+- Validate references to exist before generation
 
 #### 3. Dependency Tracker
 - Build and maintain "uses" and "used-by" relationships
-- Detect cycles (circular dependencies)
 - Calculate affected blocks when one changes
 - Mark blocks as "stale" when dependencies change
 - Support "regenerate cascade" operations
 
 #### 4. Version Manager
-- Store multiple generated versions per block
-- Support selection of preferred version
-- Enable merging traits from multiple versions
-- Track generation history and parameters
+- Store multiple generated versions per stage (simple strings)
+- Support selection of preferred version per stage
+- Enable manual editing and merging
+- Auto-increment version names (v1, v2...) or user-defined
 
 #### 5. LLM Interface
 - Abstract interface for multiple LLM providers
@@ -395,9 +348,10 @@ This graph enables:
 - Error handling and retry logic
 
 #### 6. Token Counter
-- Count tokens for input, output, summary
+- Count tokens at runtime (not stored in YAML)
 - Display breakdown before generation
 - Warn when approaching context limits
+- Support different tokenizers per LLM provider
 
 #### 7. UI Components (React)
 - **Tree Panel**: Category folders, block list, search/filter
@@ -409,35 +363,35 @@ This graph enables:
 ## User Workflows
 
 ### Workflow 1: Creating a Character
-1. Create an **Instruction Block** with character generation template (or select existing)
-2. Create a **Generation Block** referencing the instruction + specific character idea
-3. Generate multiple versions (e.g., 3 variations)
-4. Review outputs, select best traits from each
-5. Merge into final character output
-6. Write/edit summary for efficient context reuse
-7. Tag is now available for use in other blocks
+1. Ensure a character generation prompt exists in `prompts` category (or create one)
+2. Create a new block in `character` category with a `raw` stage
+3. Write input referencing `[prompts:generate_character]` + specific character idea
+4. Generate multiple versions (e.g., v1, v2, v3)
+5. Review outputs, select best version or manually merge
+6. Add a `summary` stage referencing `[tag:raw]` for efficient context reuse
+7. Block is now available for use: `[character:tag]` or `[tag:raw]`, `[tag:summary]`
 
 ### Workflow 2: Writing a Scene
-1. Create a **Generation Block** for the scene
-2. Reference relevant characters via tags: `[hero:summary]`, `[villain:full]`
-3. Reference location: `[castle_blackmoor]`
-4. Add scene-specific instructions
-5. Generate, review, and refine
-6. Tag the output for future reference (e.g., `[chapter_1_scene_3]`)
+1. Create a new block in `scene` category with a `raw` stage
+2. Reference relevant characters via tags: `[hero:summary]`, `[villain:raw]`
+3. Reference location: `[castle]`
+4. Reference prompt template: `[prompts:generate_scene]`
+5. Generate, review versions, and select best
+6. Add `refined` or `summary` stages as needed
 
 ### Workflow 3: Building a Plot Line
-1. Create blocks for major plot beats
-2. Link them via references to show progression
+1. Create blocks in `plot` category for major plot beats
+2. Link them via stage references to show progression
 3. Each beat can reference characters and locations involved
-4. Visual canvas shows the flow of the story
-5. Easily identify gaps or inconsistencies in the graph
+4. Dependency panel shows the flow of references
+5. Easily identify gaps or inconsistencies
 
 ### Workflow 4: Refining Content
-1. Select any block to regenerate
+1. Select any stage to regenerate (creates new version)
 2. System shows dependent blocks that may be affected
-3. Choose to regenerate single block or cascade to dependents
+3. Choose to regenerate single stage or cascade to dependents
 4. Compare new versions with existing
-5. Update summaries if content changed significantly
+5. Select preferred version per stage
 
 ---
 
@@ -498,36 +452,35 @@ settings:
   llm_provider: openai-main
 ```
 
-Blocks can override provider settings with `llm_override`. See [schemas/schema_v1.md](./schemas/schema_v1.md) for details.
+See [schemas/schema_v1.md](./schemas/schema_v1.md) for complete schema details.
 
 ### Token Counting & Display
 
-Token counts are calculated and displayed to help users manage context:
+Token counts are **calculated at runtime** (not stored, as they depend on the tokenizer/LLM):
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ [chapter_2_scene_1]                           category:scene│
 ├─────────────────────────────────────────────────────────────┤
-│ INPUT:                                                      │
-│   [generate_scene]         ──────────────────   245 tokens  │
-│   [forest:full]            ──────────────────    89 tokens  │
-│   [castle:summary]         ──────────────────    23 tokens  │
-│   [alice:full]             ──────────────────   320 tokens  │
-│   [bob:summary]            ──────────────────    18 tokens  │
-│   User prompt              ──────────────────    52 tokens  │
+│ INPUT (raw stage):                                          │
+│   [prompts:generate_scene]     ──────────────   245 tokens  │
+│   [location:forest]            ──────────────    89 tokens  │
+│   [location:castle:summary]    ──────────────    23 tokens  │
+│   [character:alice:raw]        ──────────────   320 tokens  │
+│   [character:bob:summary]      ──────────────    18 tokens  │
+│   User prompt                  ──────────────    52 tokens  │
 │   ─────────────────────────────────────────────────────────│
 │   TOTAL INPUT:                                  747 tokens  │
 │   Max output (max_tokens):                    4,096 tokens  │
 │   Context limit:                            128,000 tokens ✓│
 ├─────────────────────────────────────────────────────────────┤
-│ OUTPUT:                                       1,247 tokens  │
-│ SUMMARY:                                         34 tokens  │
+│ OUTPUT (after generation):                    1,247 tokens  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 Users can:
-- See which references consume the most tokens
-- Switch between `:full` and `:summary` to optimize
+- See which references are consuming the most tokens
+- Switch between stages (`:raw` vs `:summary`) to optimize
 - Be warned if total exceeds model's context limit
 - See output token count after generation
 
@@ -554,9 +507,12 @@ All design decisions are tracked in [decisions.md](./decisions.md).
 **Key Confirmed Decisions**:
 - Tree + Dependency Panel UI
 - Single YAML file storage with schema versioning
-- Tag uniqueness per category (`[category:tag]`, `[category:tag:full]`)
-- Block pipeline within each block (raw → refined → grammar → final → summary)
-- Per-stage versioning with user-selected active version
+- Unified block model (no separate instruction/content types)
+- Block = dictionary of stages (each with input/selected/output)
+- Tag uniqueness per category (`[category:tag]`, `[category:tag:stage]`)
+- Versions as simple strings (not metadata objects)
+- Token counts calculated at runtime (not stored)
+- No timestamps stored
 - Tool-level LLM config in `~/.storyforge/providers/`
 - Direct OpenAI API with abstraction layer (no LangChain/LiteLLM)
 - FastAPI + React + TypeScript + Tailwind
@@ -566,18 +522,18 @@ All design decisions are tracked in [decisions.md](./decisions.md).
 
 ## Technology Stack
 
-| Layer | Technology | Purpose |
-|-------|------------|---------|
-| **Frontend** | React 18+ | UI framework |
-| | TypeScript | Type safety |
-| | Tailwind CSS | Styling |
-| | Vite | Build tool |
-| **Backend** | Python 3.11+ | Core logic |
-| | FastAPI | REST API framework |
-| | Pydantic | Data validation |
-| | uvicorn | ASGI server |
-| **Storage** | YAML | Project files |
-| **LLM** | httpx | OpenAI API calls |
+| Layer        | Technology   | Purpose             |
+|--------------|--------------|---------------------|
+| **Frontend** | React 18+    | UI framework        |
+|              | TypeScript   | Type safety         |
+|              | Tailwind CSS | Styling             |
+|              | Vite         | Build tool          |
+| **Backend**  | Python 3.11+ | Core logic          |
+|              | FastAPI      | REST API framework  |
+|              | Pydantic     | Data validation     |
+|              | uvicorn      | ASGI server         |
+| **Storage**  | YAML         | Project files       |
+| **LLM**      | httpx        | OpenAI API calls    |
 
 ### Development Setup
 
@@ -609,51 +565,49 @@ npm run dev
 
 ## Potential Weaknesses & Mitigations
 
-| Weakness | Description | Mitigation |
-|----------|-------------|------------|
-| **Large File Size** | Single YAML file could grow very large with many versions and long outputs | Monitor in practice; future: archive old versions |
-| **Manual Dependency Management** | Writer must manually add `[tag]` references | Auto-suggest tags based on content analysis; highlight unlinked blocks |
-| **Context Window Overflow** | Deep reference chains could exceed LLM context limits | Token counting with warnings; use summaries; depth limits |
-| **Cycle Detection UX** | Circular references could create confusing errors | Real-time validation; visual warning before cycles form |
-| **Search/Filter** | Finding specific content could be difficult | Implement search, filtering by category/tag |
-| **Collaboration Limitations** | Single file makes concurrent editing difficult | Accept as v1 limitation; consider future multi-file approach |
+| Weakness                         | Description                                                                | Mitigation                                                             |
+|----------------------------------|----------------------------------------------------------------------------|------------------------------------------------------------------------|
+| **Large File Size**              | Single YAML file could grow very large with many versions and long outputs | Monitor in practice; future: archive old versions                      |
+| **Manual Dependency Management** | Writer must manually add `[block_name]` references                         | Auto-suggest tags based on content analysis; highlight unlinked blocks |
+| **Context Window Overflow**      | Deep reference chains could exceed LLM context limits                      | Token counting with warnings; use summaries; depth limits              |
+| **Search/Filter**                | Finding specific content could be difficult                                | Implement search, filtering by category/block_name                     |
+| **Collaboration Limitations**    | Single file makes concurrent editing difficult                             | Accept as v1 limitation; consider future multi-file approach           |
 
 ---
 
 ## Development Phases
 
 ### Phase 1: Core Data Model
-- [ ] Define Block schema and YAML structure with category:tag uniqueness
+- [ ] Define Block schema and YAML structure (category:block_name, stages)
 - [ ] Implement project file load/save
-- [ ] Tag parsing and reference resolution (`[tag]`, `[category:tag]`, `[tag:full]`, `[tag:summary]`)
+- [ ] Tag parsing and reference resolution (`[block_name]`, `[category:block_name]`, `[block_name:stage]`)
 - [ ] Dependency tracking (uses/used-by)
-- [ ] Cycle detection
 
 ### Phase 2: LLM Integration
 - [ ] Abstract LLM interface
 - [ ] OpenAI provider implementation
 - [ ] Context assembly from resolved references
 - [ ] Generation with multiple versions
-- [ ] Token counting and warnings
+- [ ] Runtime token counting and warnings
 
-### Phase 3: Version & Merge Management
-- [ ] Store and list versions per pipeline stage
+### Phase 3: Version Management
+- [ ] Store and list versions per stage (simple strings)
 - [ ] Select preferred version per stage
 - [ ] Manual version editing/merging
-- [ ] Summary generation
+- [ ] Stage creation (raw, refined, summary, etc.)
 
 ### Phase 4: Tree-Based UI (MVP)
 - [ ] Tree panel with category folders
-- [ ] Editor panel for input/output/summary
+- [ ] Editor panel for stage input/output
 - [ ] Dependency panel showing uses/used-by
 - [ ] Block creation, editing, deletion
 - [ ] Tag autocomplete when typing `[`
-- [ ] Token count display
+- [ ] Token count display (runtime)
 - [ ] Version comparison view
 
 ### Phase 5: Enhanced Features
 - [ ] Multiple LLM providers (via abstraction)
-- [ ] Pre-built instruction templates
+- [ ] Pre-built prompt templates
 - [ ] Search and filter blocks
 - [ ] Stale block detection
 - [ ] Regeneration cascade
@@ -669,14 +623,16 @@ npm run dev
 
 See [decisions.md](./decisions.md) for complete decision log.
 
-| Category | Decision |
-|----------|----------|
-| **UI** | Tree + Dependency Panel (React, TypeScript, Tailwind) |
-| **Backend** | FastAPI + Python 3.11+ |
-| **Storage** | Single YAML file per project |
-| **Tags** | Unique within category, `[category:tag]` syntax |
-| **Pipeline** | raw → refined → grammar → final → summary |
-| **Versions** | Unlimited, side-by-side comparison, manual merge |
+| Category      | Decision                                                     |
+|---------------|--------------------------------------------------------------|
+| **UI**        | Tree + Dependency Panel (React, TypeScript, Tailwind)        |
+| **Backend**   | FastAPI + Python 3.11+                                       |
+| **Storage**   | Single YAML file per project                                 |
+| **Blocks**    | Unified model - all content is blocks                        |
+| **Structure** | Block = dict of stages, each with input/selected/output      |
+| **Tags**      | Unique within category, `[category:block_name:stage]` syntax |
+| **Versions**  | Simple strings, unlimited, side-by-side comparison           |
+| **Tokens**    | Calculated at runtime, not stored                            |
 
 ---
 
@@ -686,8 +642,10 @@ Before coding, ensure these are addressed:
 
 1. **Schema finalization**:
    - [x] `schema_version` field for migrations
-   - [ ] `status` and `error` fields on pipeline stages
-   - [ ] `created_at`, `modified_at` timestamps on all entities
+   - [x] Unified block model (no separate types)
+   - [x] Block = dict of stages structure
+   - [x] Versions as simple strings
+   - [x] No stored timestamps or token counts
 
 2. **LLM abstraction layer**:
    - [ ] Define abstract interface
@@ -696,7 +654,7 @@ Before coding, ensure these are addressed:
 
 3. **Error states to define**:
    - [ ] LLM API errors (rate limit, timeout, invalid key)
-   - [ ] Validation errors (cycle detection, ambiguous refs)
+   - [ ] Validation errors (ambiguous refs, missing refs)
    - [ ] File errors (corrupt YAML, permission denied)
 
 ---
