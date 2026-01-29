@@ -1,5 +1,10 @@
 # StoryForge
 A tree-based story writing tool with LLM integration. Build complex narratives by organizing content into blocks with references, then use AI to generate and iterate on your writing.
+
+This is playground to learn interactions with LLM, and how to use github copilot to write apps. 
+If you appreciate the project, you learned from it, you can buy me a coffee at 
+[buycofee.to](https://buycoffee.to/pawel.dawidowski).
+
 ## Features
 - **Tree-based Organization**: Organize your story into categories (characters, locations, scenes, prompts) with blocks
 - **Block References**: Reference other blocks using `[block_name]` or `[category:block]` syntax
