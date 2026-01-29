@@ -1,0 +1,16 @@
+{
+  "name": "storyforge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "StoryForge - A tool for managing story blocks",
+  "scripts": {
+    "dev": "./run.sh",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build": "cd frontend && npm run build",
+    "lint": "cd frontend && npm run lint",
+    "test:backend": "cd backend && uv run pytest",
+    "install:all": "cd frontend && npm install"
+  },
+  "keywords": ["storyforge", "writing", "story"],
+  "license": "MIT"
+}

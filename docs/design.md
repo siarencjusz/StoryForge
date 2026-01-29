@@ -1,6 +1,6 @@
 # StoryForge Design Document
 
-> **Last Updated**: January 28, 2026  
+> **Last Updated**: January 29, 2026  
 > **See also**: [decisions.md](./decisions.md) for all design decisions
 
 ## Overview

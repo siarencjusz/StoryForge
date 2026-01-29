@@ -1,6 +1,6 @@
 # StoryForge - Decision Summary
 
-> **Last Updated**: January 28, 2026  
+> **Last Updated**: January 29, 2026  
 > **Purpose**: Single source of truth for all design decisions
 
 ---
@@ -21,9 +21,23 @@
 |-----------------|------------------------------------------------|------------------------------------------------------------------------------|
 | UI Paradigm     | **Tree + Dependency Panel**                    | Familiar UX (VS Code-like), scales to 100+ blocks, more writing space        |
 | UI Technology   | FastAPI backend + React frontend               | Clear separation, async LLM support, modern tooling                          |
-| Frontend Stack  | React 18+, TypeScript, Tailwind CSS, Vite      | Type safety, rapid development, modern DX                                    |
-| Backend Stack   | Python 3.11+, FastAPI, Pydantic, uvicorn       | Async support, validation, auto-docs                                         |
+| Frontend Stack  | React 19, TypeScript, Tailwind CSS, Vite       | Type safety, rapid development, modern DX                                    |
+| State Management| Zustand                                        | Lightweight, simple API, no boilerplate                                      |
+| Backend Stack   | Python 3.12+, FastAPI, Pydantic, uvicorn       | Async support, validation, auto-docs                                         |
+| Theme           | **Dark theme** (implemented)                   | Easier on eyes for long writing sessions, modern aesthetic                   |
 | Standalone      | Web-based, no editor integrations              | Focus on core product                                                        |
+
+### UI Implementation Details
+
+| Decision              | Choice                                    | Rationale                                        |
+|-----------------------|-------------------------------------------|--------------------------------------------------|
+| Panel Layout          | 3-column (Tree, Editor, Dependencies)     | Clear separation of concerns                     |
+| Resizable Panels      | Drag handle between input/output          | User can adjust to preference                    |
+| Stage Reordering      | Drag & drop tabs                          | Intuitive, standard pattern                      |
+| Block Comparison      | Shift+Click or dedicated button           | Multiple ways to access feature                  |
+| Block Duplication     | One-click button on hover                 | Quick workflow for similar blocks                |
+| Version Comparison    | Shift+Click for side-by-side              | Doesn't require extra UI space                   |
+| File Operations       | Browser File API (no backend needed)      | Works offline, simpler architecture              |
 
 ### Block System
 

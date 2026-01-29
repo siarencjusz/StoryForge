@@ -1,0 +1,52 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+
+  body {
+    @apply bg-sf-bg-900 text-sf-text-200 font-sans antialiased;
+  }
+}
+
+@layer components {
+  /* Panel styles */
+  .panel {
+    @apply bg-sf-bg-800 border border-sf-bg-600 rounded-lg;
+  }
+
+  /* Tree item styles */
+  .tree-item {
+    @apply flex items-center gap-2 px-2 py-1 rounded cursor-pointer hover:bg-sf-bg-700 transition-colors;
+  }
+
+  .tree-item.selected {
+    @apply bg-sf-bg-700 text-sf-text-100;
+  }
+
+  /* Button styles */
+  .btn {
+    @apply px-3 py-1.5 rounded font-medium transition-colors;
+  }
+
+  .btn-primary {
+    @apply bg-sf-accent-600 text-white hover:bg-sf-accent-500;
+  }
+
+  .btn-secondary {
+    @apply bg-sf-bg-700 text-sf-text-200 hover:bg-sf-bg-600;
+  }
+
+  /* Input styles */
+  .input {
+    @apply bg-sf-bg-900 border border-sf-bg-600 rounded px-3 py-2 text-sf-text-200
+           placeholder:text-sf-text-400 focus:outline-none focus:border-sf-accent-500;
+  }
+
+  /* Textarea for content editing */
+  .textarea {
+    @apply bg-sf-bg-900 border border-sf-bg-600 rounded px-3 py-2 text-sf-text-200
+           placeholder:text-sf-text-400 focus:outline-none focus:border-sf-accent-500
+           font-mono text-sm resize-none;
+  }
+}
