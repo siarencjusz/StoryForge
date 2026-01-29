@@ -1,6 +1,6 @@
-import { ChevronRight, ChevronDown, Folder, FileText, Plus, PanelRight, Copy, X } from 'lucide-react';
+import { ChevronRight, ChevronDown, Folder, FileText, Plus, PanelRight, Copy, X, GripVertical } from 'lucide-react';
 import { useProjectStore } from '../store/projectStore';
-import { useState } from 'react';
+import { useState, type DragEvent } from 'react';
 
 export function TreePanel() {
   const {
@@ -19,6 +19,8 @@ export function TreePanel() {
     renameCategory,
     renameBlock,
     duplicateBlock,
+    reorderCategories,
+    reorderBlocks,
   } = useProjectStore();
 
   const [newCategoryName, setNewCategoryName] = useState('');
@@ -29,6 +31,12 @@ export function TreePanel() {
   const [editingCategoryName, setEditingCategoryName] = useState('');
   const [editingBlock, setEditingBlock] = useState<{ category: string; block: string } | null>(null);
   const [editingBlockName, setEditingBlockName] = useState('');
+
+  // Drag and drop state
+  const [draggedCategory, setDraggedCategory] = useState<string | null>(null);
+  const [draggedBlock, setDraggedBlock] = useState<{ category: string; block: string } | null>(null);
+  const [dropTargetCategory, setDropTargetCategory] = useState<string | null>(null);
+  const [dropTargetBlock, setDropTargetBlock] = useState<{ category: string; block: string } | null>(null);
 
   const categories = listCategories();
   const expandedCategories = project.tree.expanded_categories;
@@ -117,6 +125,90 @@ export function TreePanel() {
   const isBlockSecondary = (category: string, block: string) =>
     secondarySelection?.category === category && secondarySelection?.block === block;
 
+  // Category drag handlers
+  const handleCategoryDragStart = (e: DragEvent, category: string) => {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', category);
+    setDraggedCategory(category);
+  };
+
+  const handleCategoryDragOver = (e: DragEvent, category: string) => {
+    if (!draggedCategory || draggedCategory === category) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDropTargetCategory(category);
+  };
+
+  const handleCategoryDragLeave = () => {
+    setDropTargetCategory(null);
+  };
+
+  const handleCategoryDrop = (e: DragEvent, targetCategory: string) => {
+    e.preventDefault();
+    if (!draggedCategory || draggedCategory === targetCategory) return;
+
+    const fromIndex = categories.indexOf(draggedCategory);
+    const toIndex = categories.indexOf(targetCategory);
+
+    if (fromIndex !== -1 && toIndex !== -1) {
+      reorderCategories(fromIndex, toIndex);
+    }
+
+    setDraggedCategory(null);
+    setDropTargetCategory(null);
+  };
+
+  const handleCategoryDragEnd = () => {
+    setDraggedCategory(null);
+    setDropTargetCategory(null);
+  };
+
+  // Block drag handlers
+  const handleBlockDragStart = (e: DragEvent, category: string, block: string) => {
+    e.stopPropagation(); // Prevent category drag
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', `${category}:${block}`);
+    setDraggedBlock({ category, block });
+  };
+
+  const handleBlockDragOver = (e: DragEvent, category: string, block: string) => {
+    if (!draggedBlock || (draggedBlock.category === category && draggedBlock.block === block)) return;
+    // Only allow reordering within the same category
+    if (draggedBlock.category !== category) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    setDropTargetBlock({ category, block });
+  };
+
+  const handleBlockDragLeave = () => {
+    setDropTargetBlock(null);
+  };
+
+  const handleBlockDrop = (e: DragEvent, targetCategory: string, targetBlock: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!draggedBlock || draggedBlock.category !== targetCategory) return;
+    if (draggedBlock.block === targetBlock) return;
+
+    const blocks = listBlocks(targetCategory);
+    const fromIndex = blocks.indexOf(draggedBlock.block);
+    const toIndex = blocks.indexOf(targetBlock);
+
+    if (fromIndex !== -1 && toIndex !== -1) {
+      reorderBlocks(targetCategory, fromIndex, toIndex);
+    }
+
+    setDraggedBlock(null);
+    setDropTargetBlock(null);
+  };
+
+  const handleBlockDragEnd = () => {
+    setDraggedBlock(null);
+    setDropTargetBlock(null);
+  };
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -185,14 +277,21 @@ export function TreePanel() {
                 </div>
               ) : (
                 <div
-                  className="tree-item group"
+                  className={`tree-item group ${dropTargetCategory === category ? 'ring-1 ring-sf-accent-500' : ''} ${draggedCategory === category ? 'opacity-50' : ''}`}
                   onClick={() => toggleCategory(category)}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
                     setEditingCategory(category);
                     setEditingCategoryName(category);
                   }}
+                  draggable
+                  onDragStart={(e) => handleCategoryDragStart(e, category)}
+                  onDragOver={(e) => handleCategoryDragOver(e, category)}
+                  onDragLeave={handleCategoryDragLeave}
+                  onDrop={(e) => handleCategoryDrop(e, category)}
+                  onDragEnd={handleCategoryDragEnd}
                 >
+                  <GripVertical size={14} className="text-sf-text-500 shrink-0 cursor-grab opacity-0 group-hover:opacity-100" />
                   {isExpanded ? (
                     <ChevronDown size={16} className="text-sf-text-400 shrink-0" />
                   ) : (
@@ -278,14 +377,21 @@ export function TreePanel() {
                     ) : (
                       <div
                         key={block}
-                        className={`tree-item ml-2 group ${isSelected ? 'selected' : ''} ${isSecondary ? 'ring-1 ring-sf-accent-400' : ''}`}
+                        className={`tree-item ml-2 group ${isSelected ? 'selected' : ''} ${isSecondary ? 'ring-1 ring-sf-accent-400' : ''} ${dropTargetBlock?.category === category && dropTargetBlock?.block === block ? 'ring-1 ring-sf-accent-500' : ''} ${draggedBlock?.category === category && draggedBlock?.block === block ? 'opacity-50' : ''}`}
                         onClick={(e) => handleBlockClick(category, block, e)}
                         onDoubleClick={(e) => {
                           e.stopPropagation();
                           setEditingBlock({ category, block });
                           setEditingBlockName(block);
                         }}
+                        draggable
+                        onDragStart={(e) => handleBlockDragStart(e, category, block)}
+                        onDragOver={(e) => handleBlockDragOver(e, category, block)}
+                        onDragLeave={handleBlockDragLeave}
+                        onDrop={(e) => handleBlockDrop(e, category, block)}
+                        onDragEnd={handleBlockDragEnd}
                       >
+                        <GripVertical size={14} className="text-sf-text-500 shrink-0 cursor-grab opacity-0 group-hover:opacity-100" />
                         <FileText size={16} className={`shrink-0 ${isSecondary ? 'text-sf-accent-400' : 'text-sf-text-400'}`} />
                         <span className="text-sm truncate flex-1">{block}</span>
                         <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100">

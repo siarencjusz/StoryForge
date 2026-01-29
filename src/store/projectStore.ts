@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import type { Project, Block, Stage, Selection } from '../types';
 
 /** Create empty project state */
@@ -56,6 +57,7 @@ interface ProjectStore {
   createCategory: (category: string) => void;
   deleteCategory: (category: string) => void;
   renameCategory: (oldName: string, newName: string) => void;
+  reorderCategories: (fromIndex: number, toIndex: number) => void;
 
   // Block operations
   listBlocks: (category: string) => string[];
@@ -64,6 +66,7 @@ interface ProjectStore {
   deleteBlock: (category: string, name: string) => void;
   renameBlock: (category: string, oldName: string, newName: string) => void;
   duplicateBlock: (category: string, name: string) => void;
+  reorderBlocks: (category: string, fromIndex: number, toIndex: number) => void;
 
   // Stage operations
   listStages: (category: string, block: string) => string[];
@@ -81,13 +84,16 @@ interface ProjectStore {
   selectVersion: (category: string, block: string, stage: string, version: string) => void;
   deleteVersion: (category: string, block: string, stage: string, version: string) => void;
   renameVersion: (category: string, block: string, stage: string, oldName: string, newName: string) => void;
+  reorderVersions: (category: string, block: string, stage: string, fromIndex: number, toIndex: number) => void;
   getSelectedOutput: (category: string, block: string, stage: string) => string | undefined;
 
   // Export
   getProjectForExport: () => Project;
 }
 
-export const useProjectStore = create<ProjectStore>((set, get) => ({
+export const useProjectStore = create<ProjectStore>()(
+  persist(
+    (set, get) => ({
   // Initial state
   project: createEmptyProject(),
   filePath: null,
@@ -233,6 +239,34 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     });
   },
 
+  reorderCategories: (fromIndex, toIndex) => {
+    set((state) => {
+      const categories = Object.keys(state.project.blocks);
+      if (fromIndex < 0 || fromIndex >= categories.length || toIndex < 0 || toIndex >= categories.length) {
+        return state;
+      }
+
+      // Remove the category from its current position
+      const [movedCategory] = categories.splice(fromIndex, 1);
+      // Insert it at the new position
+      categories.splice(toIndex, 0, movedCategory);
+
+      // Rebuild the blocks object with new order
+      const reorderedBlocks: typeof state.project.blocks = {};
+      for (const cat of categories) {
+        reorderedBlocks[cat] = state.project.blocks[cat];
+      }
+
+      return {
+        project: {
+          ...state.project,
+          blocks: reorderedBlocks,
+        },
+        isDirty: true,
+      };
+    });
+  },
+
   // Block operations
   listBlocks: (category) => {
     const blocks = get().project.blocks[category];
@@ -327,6 +361,40 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           blocks: {
             ...state.project.blocks,
             [category]: { ...categoryBlocks, [newName]: clonedBlock },
+          },
+        },
+        isDirty: true,
+      };
+    });
+  },
+
+  reorderBlocks: (category, fromIndex, toIndex) => {
+    set((state) => {
+      const categoryBlocks = state.project.blocks[category];
+      if (!categoryBlocks) return state;
+
+      const blockNames = Object.keys(categoryBlocks);
+      if (fromIndex < 0 || fromIndex >= blockNames.length || toIndex < 0 || toIndex >= blockNames.length) {
+        return state;
+      }
+
+      // Remove the block from its current position
+      const [movedBlock] = blockNames.splice(fromIndex, 1);
+      // Insert it at the new position
+      blockNames.splice(toIndex, 0, movedBlock);
+
+      // Rebuild the category blocks object with new order
+      const reorderedBlocks: typeof categoryBlocks = {};
+      for (const blockName of blockNames) {
+        reorderedBlocks[blockName] = categoryBlocks[blockName];
+      }
+
+      return {
+        project: {
+          ...state.project,
+          blocks: {
+            ...state.project.blocks,
+            [category]: reorderedBlocks,
           },
         },
         isDirty: true,
@@ -596,6 +664,49 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     });
   },
 
+  reorderVersions: (category, block, stage, fromIndex, toIndex) => {
+    set((state) => {
+      const stageData = state.project.blocks[category]?.[block]?.[stage];
+      if (!stageData) return state;
+
+      const versionKeys = Object.keys(stageData.output);
+      if (fromIndex < 0 || fromIndex >= versionKeys.length || toIndex < 0 || toIndex >= versionKeys.length) {
+        return state;
+      }
+
+      // Remove the version from its current position
+      const [movedVersion] = versionKeys.splice(fromIndex, 1);
+      // Insert it at the new position
+      versionKeys.splice(toIndex, 0, movedVersion);
+
+      // Rebuild the output object with new order
+      const reorderedOutput: typeof stageData.output = {};
+      for (const key of versionKeys) {
+        reorderedOutput[key] = stageData.output[key];
+      }
+
+      return {
+        project: {
+          ...state.project,
+          blocks: {
+            ...state.project.blocks,
+            [category]: {
+              ...state.project.blocks[category],
+              [block]: {
+                ...state.project.blocks[category][block],
+                [stage]: {
+                  ...stageData,
+                  output: reorderedOutput,
+                },
+              },
+            },
+          },
+        },
+        isDirty: true,
+      };
+    });
+  },
+
   getSelectedOutput: (category, block, stage) => {
     const stageData = get().project.blocks[category]?.[block]?.[stage];
     if (!stageData?.selected) return undefined;
@@ -641,4 +752,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       tree: state.project.tree,
     };
   },
-}));
+    }),
+    {
+      name: 'storyforge-project',
+      partialize: (state) => ({
+        project: state.project,
+        filePath: state.filePath,
+        // Don't persist isDirty, selection, secondarySelection - they're UI state
+      }),
+    }
+  )
+);

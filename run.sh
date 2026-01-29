@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # StoryForge Development Runner
-# This script starts both the backend and frontend development servers
+# This script starts the development server
 
 set -e
 
@@ -26,20 +26,20 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM EXIT
 
-# Check if node_modules exists in frontend
-if [ ! -d "$PROJECT_ROOT/frontend/node_modules" ]; then
-    echo -e "${YELLOW}Installing frontend dependencies...${NC}"
-    cd "$PROJECT_ROOT/frontend"
+# Check if node_modules exists
+if [ ! -d "$PROJECT_ROOT/node_modules" ]; then
+    echo -e "${YELLOW}Installing dependencies...${NC}"
+    cd "$PROJECT_ROOT"
     npm install
 fi
 
-# Start frontend dev server
-echo -e "${GREEN}Starting frontend (Vite)...${NC}"
-cd "$PROJECT_ROOT/frontend"
+# Start dev server
+echo -e "${GREEN}Starting Vite dev server...${NC}"
+cd "$PROJECT_ROOT"
 npm run dev &
-FRONTEND_PID=$!
+DEV_PID=$!
 
-# Wait a moment for frontend to start
+# Wait a moment for server to start
 sleep 2
 
 echo ""
@@ -47,10 +47,10 @@ echo -e "${GREEN}============================================${NC}"
 echo -e "${GREEN}StoryForge is running!${NC}"
 echo -e "${GREEN}============================================${NC}"
 echo ""
-echo -e "Frontend: ${YELLOW}http://localhost:5173${NC}"
+echo -e "App: ${YELLOW}http://localhost:5173${NC}"
 echo ""
-echo -e "Press ${RED}Ctrl+C${NC} to stop all services"
+echo -e "Press ${RED}Ctrl+C${NC} to stop"
 echo ""
 
-# Wait for any process to exit
-wait $FRONTEND_PID
+# Wait for the dev server
+wait $DEV_PID

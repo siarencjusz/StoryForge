@@ -434,22 +434,36 @@ MVP will support OpenAI API only. Abstraction layer allows adding other provider
 
 ### LLM Configuration
 
-**Tool-Level Setup** (stored outside projects in `~/.storyforge/providers/`):
+**Browser-Based Configuration** (stored in browser localStorage via Zustand persist):
 
-```yaml
-# ~/.storyforge/providers/openai-main.yaml
-name: openai-main
-provider: openai
-api_key: sk-...           # Or: ${OPENAI_API_KEY}
-default_model: gpt-4o
-default_temperature: 0.8
+LLM configurations are managed directly in the frontend and persisted to localStorage. Each configuration supports OpenAI-compatible APIs (including local LLM servers like llama.cpp, Ollama, LM Studio).
+
+```typescript
+interface LLMConfig {
+  id: string;          // Unique identifier
+  name: string;        // Display name (e.g., "Local LLM", "OpenAI GPT-4")
+  endpoint: string;    // API endpoint (e.g., "http://127.0.0.1:5000")
+  apiKey?: string;     // Optional API key
+  model: string;       // Model name
+  maxTokens: number;   // Max tokens for generation
+  temperature: number; // Temperature (0.0 - 2.0)
+  isActive: boolean;   // Whether this config is active
+}
 ```
 
-**Project Configuration** (references provider by name):
+**Features**:
+- **Multiple Configurations**: Add, edit, delete LLM configurations
+- **Ping Status**: Test endpoint connectivity and view available models
+- **Active Selection**: One configuration is active at a time
+- **Settings Modal**: Accessible from header status indicator
+
+**Reference Resolution**: When generating, `[block]`, `[category:block]`, or `[category:block:stage]` references in the input are resolved to their selected output content before sending to the LLM.
+
+**Project Configuration** (optional, stored in project file):
 
 ```yaml
 settings:
-  llm_provider: openai-main
+  llm_provider: openai-main  # References a named config (for portability)
 ```
 
 See [schemas/schema_v1.md](./schemas/schema_v1.md) for complete schema details.
@@ -513,8 +527,8 @@ All design decisions are tracked in [decisions.md](./decisions.md).
 - Versions as simple strings (not metadata objects)
 - Token counts calculated at runtime (not stored)
 - No timestamps stored
-- Tool-level LLM config in `~/.storyforge/providers/`
-- Direct OpenAI API with abstraction layer (no LangChain/LiteLLM)
+- Browser-based LLM config in localStorage (Zustand persist)
+- Direct OpenAI-compatible API (supports local LLMs like llama.cpp, Ollama, LM Studio)
 - FastAPI + React + TypeScript + Tailwind
 - UI-only (no CLI)
 

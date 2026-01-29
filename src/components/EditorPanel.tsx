@@ -1,6 +1,10 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { Plus, Check, Trash2, RefreshCw, X, Columns2, GripVertical, Sparkles, Square, FastForward, GripHorizontal } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Plus, Check, Trash2, RefreshCw, X, Columns2, GripVertical, Sparkles, Square, FastForward, GripHorizontal, Loader2 } from 'lucide-react';
 import { useProjectStore } from '../store/projectStore';
+import { useLLMStore } from '../store/llmStore';
+import { resolveReferences } from '../utils/referenceUtils';
+import { estimateTokens, formatTokenCount } from '../utils/tokenUtils';
+import { Hint } from './Hint';
 import type { Selection } from '../types';
 
 interface EditorPanelProps {
@@ -15,6 +19,7 @@ interface EditorPanelProps {
 export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorPanelProps) {
   const {
     selection: storeSelection,
+    project,
     listStages,
     getStage,
     addStage,
@@ -26,8 +31,12 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
     addVersion,
     updateVersionContent,
     selectVersion,
+    deleteVersion,
     renameVersion,
+    reorderVersions,
   } = useProjectStore();
+
+  const { generateStreaming, stopGeneration, generationState, getActiveConfig, setShowSettings } = useLLMStore();
 
   // Use override selection if provided, otherwise use store selection
   const selection = selectionOverride !== undefined ? selectionOverride : storeSelection;
@@ -44,6 +53,9 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
   // Drag & drop state for stages
   const [draggedStageIndex, setDraggedStageIndex] = useState<number | null>(null);
   const [dragOverStageIndex, setDragOverStageIndex] = useState<number | null>(null);
+  // Drag & drop state for versions
+  const [draggedVersionIndex, setDraggedVersionIndex] = useState<number | null>(null);
+  const [dragOverVersionIndex, setDragOverVersionIndex] = useState<number | null>(null);
   // Resizable input panel
   const [inputHeight, setInputHeight] = useState(250); // Default height in pixels
   const [isResizing, setIsResizing] = useState(false);
@@ -86,7 +98,217 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
     setCompareVersions(null);
   }, [selection?.category, selection?.block]);
 
-  // No selection state
+  // Get stages for current selection
+  const stages = selection ? listStages(selection.category, selection.block) : [];
+  const category = selection?.category ?? '';
+  const block = selection?.block ?? '';
+  const currentStage = activeStage && selection ? getStage(category, block, activeStage) : null;
+  const versions = activeStage && selection ? listVersions(category, block, activeStage) : [];
+
+  // Auto-select first stage if none selected
+  useEffect(() => {
+    if (stages.length > 0 && !activeStage) {
+      setActiveStage(stages[0]);
+    }
+  }, [stages, activeStage]);
+
+  // Generation handlers - must be defined before any returns
+  const handleGenerateNew = useCallback(() => {
+    if (!activeStage || !currentStage || !selection) return;
+
+    const activeConfig = getActiveConfig();
+    if (!activeConfig) {
+      setShowSettings(true);
+      return;
+    }
+
+    // Resolve references in the input
+    const { resolved, errors } = resolveReferences(currentStage.input, project.blocks);
+
+    if (errors.length > 0) {
+      alert(`Cannot generate: Missing references:\n${errors.join('\n')}`);
+      return;
+    }
+
+    // Create a new version for the output
+    const nextVersion = `v${versions.length + 1}`;
+    addVersion(category, block, activeStage, nextVersion, '');
+    selectVersion(category, block, activeStage, nextVersion);
+    setCompareVersions(null);
+
+    // Send to LLM with streaming
+    generateStreaming(
+      [{ role: 'user', content: resolved }],
+      (_token, fullContent) => {
+        // Update content live as tokens arrive
+        updateVersionContent(category, block, activeStage, nextVersion, fullContent);
+      },
+      (content) => {
+        // On complete, ensure final content is saved
+        updateVersionContent(category, block, activeStage, nextVersion, content);
+      },
+      (error) => {
+        // On error, show alert and mark the version
+        alert(`Generation failed: ${error}`);
+        updateVersionContent(category, block, activeStage, nextVersion, `[Generation Error: ${error}]`);
+      }
+    );
+  }, [activeStage, currentStage, selection, versions, category, block, project.blocks, getActiveConfig, setShowSettings, generateStreaming, addVersion, selectVersion, updateVersionContent]);
+
+  const handleRegenerate = useCallback(() => {
+    if (!activeStage || !currentStage || !currentStage.selected || !selection) return;
+
+    const activeConfig = getActiveConfig();
+    if (!activeConfig) {
+      setShowSettings(true);
+      return;
+    }
+
+    // Resolve references in the input
+    const { resolved, errors } = resolveReferences(currentStage.input, project.blocks);
+
+    if (errors.length > 0) {
+      alert(`Cannot generate: Missing references:\n${errors.join('\n')}`);
+      return;
+    }
+
+    const currentVersion = currentStage.selected;
+
+    // Send to LLM with streaming
+    generateStreaming(
+      [{ role: 'user', content: resolved }],
+      (_token, fullContent) => {
+        // Update content live as tokens arrive
+        updateVersionContent(category, block, activeStage, currentVersion, fullContent);
+      },
+      (content) => {
+        updateVersionContent(category, block, activeStage, currentVersion, content);
+      },
+      (error) => {
+        alert(`Generation failed: ${error}`);
+      }
+    );
+  }, [activeStage, currentStage, selection, category, block, project.blocks, getActiveConfig, setShowSettings, generateStreaming, updateVersionContent]);
+
+  const handleContinue = useCallback(() => {
+    if (!activeStage || !currentStage || !currentStage.selected || !selection) return;
+
+    const activeConfig = getActiveConfig();
+    if (!activeConfig) {
+      setShowSettings(true);
+      return;
+    }
+
+    // Resolve references in the input
+    const { resolved, errors } = resolveReferences(currentStage.input, project.blocks);
+
+    if (errors.length > 0) {
+      alert(`Cannot generate: Missing references:\n${errors.join('\n')}`);
+      return;
+    }
+
+    const currentVersion = currentStage.selected;
+    const existingContent = currentStage.output[currentVersion] ?? '';
+
+    // Send to LLM with existing content as context, streaming
+    generateStreaming(
+      [
+        { role: 'user', content: resolved },
+        { role: 'assistant', content: existingContent },
+        { role: 'user', content: 'Continue from where you left off.' },
+      ],
+      (_token, newContent) => {
+        // Update content live - append new tokens to existing content
+        updateVersionContent(category, block, activeStage, currentVersion, existingContent + newContent);
+      },
+      (content) => {
+        updateVersionContent(category, block, activeStage, currentVersion, existingContent + content);
+      },
+      (error) => {
+        alert(`Generation failed: ${error}`);
+      }
+    );
+  }, [activeStage, currentStage, selection, category, block, project.blocks, getActiveConfig, setShowSettings, generateStreaming, updateVersionContent]);
+
+  const handleStopGeneration = useCallback(() => {
+    stopGeneration();
+  }, [stopGeneration]);
+
+  const isGenerating = generationState.status === 'generating';
+
+  // Calculate token counts for current stage with breakdown
+  const tokenCounts = useMemo(() => {
+    const emptyResult = {
+      input: 0,
+      output: 0,
+      resolvedInput: 0,
+      baseTokens: 0,
+      breakdown: [] as Array<{ ref: string; tokens: number }>
+    };
+
+    if (!currentStage) return emptyResult;
+
+    // Count raw input tokens (without resolving references)
+    const rawInputTokens = estimateTokens(currentStage.input);
+
+    // Get resolved content and references info
+    const { resolved, references } = resolveReferences(currentStage.input, project.blocks);
+    const resolvedInputTokens = estimateTokens(resolved);
+
+    // Build breakdown of token contributions
+    const breakdown: Array<{ ref: string; tokens: number }> = [];
+
+    // Calculate base tokens (input without references)
+    const inputWithoutRefs = currentStage.input.replace(/\[[^\]]+\]/g, '');
+    const baseTokens = estimateTokens(inputWithoutRefs);
+
+    // Add each reference's contribution
+    for (const ref of references) {
+      if (ref.content) {
+        breakdown.push({
+          ref: ref.ref,
+          tokens: estimateTokens(ref.content),
+        });
+      }
+    }
+
+    // Count output tokens for selected version
+    const selectedOutput = currentStage.selected ? currentStage.output[currentStage.selected] : '';
+    const outputTokens = estimateTokens(selectedOutput || '');
+
+    return {
+      input: rawInputTokens,
+      output: outputTokens,
+      resolvedInput: resolvedInputTokens,
+      baseTokens,
+      breakdown,
+    };
+  }, [currentStage, project.blocks]);
+
+  // Handler to delete a version with confirmation
+  const handleDeleteVersion = useCallback((version: string) => {
+    if (!activeStage) return;
+
+    if (versions.length <= 1) {
+      alert('Cannot delete the last version');
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete version "${version}"? This cannot be undone.`);
+    if (!confirmed) return;
+
+    deleteVersion(category, block, activeStage, version);
+
+    // If we deleted the selected version, select another one
+    if (currentStage?.selected === version) {
+      const remaining = versions.filter(v => v !== version);
+      if (remaining.length > 0) {
+        selectVersion(category, block, activeStage, remaining[0]);
+      }
+    }
+  }, [activeStage, versions, category, block, currentStage, deleteVersion, selectVersion]);
+
+  // No selection state - early return AFTER all hooks
   if (!selection) {
     return (
       <div className="flex items-center justify-center h-full text-sf-text-400">
@@ -97,14 +319,8 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
       </div>
     );
   }
-  const { category, block } = selection;
-  const stages = listStages(category, block);
-  // Auto-select first stage if none selected
-  if (stages.length > 0 && !activeStage) {
-    setActiveStage(stages[0]);
-  }
-  const currentStage = activeStage ? getStage(category, block, activeStage) : null;
-  const versions = activeStage ? listVersions(category, block, activeStage) : [];
+
+  // Helper functions (not hooks, so can be after early return)
   const handleCreateStage = () => {
     if (newStageName.trim()) {
       addStage(category, block, newStageName.trim());
@@ -280,13 +496,14 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
             autoFocus
           />
         ) : (
-          <button
-            onClick={() => setShowNewStage(true)}
-            className="p-1 text-sf-text-400 hover:text-sf-text-200 hover:bg-sf-bg-700 rounded"
-            title="Add Stage"
-          >
-            <Plus size={16} />
-          </button>
+          <Hint hint="editor-add-stage" position="bottom">
+            <button
+              onClick={() => setShowNewStage(true)}
+              className="p-1 text-sf-text-400 hover:text-sf-text-200 hover:bg-sf-bg-700 rounded"
+            >
+              <Plus size={16} />
+            </button>
+          </Hint>
         )}
       </div>
 
@@ -297,7 +514,21 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
           <div className="flex flex-col shrink-0" style={{ height: inputHeight }}>
             <div className="flex-1 flex flex-col p-3 overflow-hidden">
               <div className="flex items-center justify-between mb-2">
-                <label className="text-sm font-medium text-sf-text-300">INPUT</label>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <label className="text-sm font-medium text-sf-text-300">INPUT</label>
+                  <span className="text-xs text-sf-text-400 font-mono">
+                    {tokenCounts.breakdown.length > 0 ? (
+                      <>
+                        {formatTokenCount(tokenCounts.resolvedInput)} = {formatTokenCount(tokenCounts.baseTokens)}
+                        {tokenCounts.breakdown.map((item, i) => (
+                          <span key={i} className="text-sf-text-500"> + {formatTokenCount(item.tokens)}<span className="text-sf-accent-400">[{item.ref}]</span></span>
+                        ))}
+                      </>
+                    ) : (
+                      <>{formatTokenCount(tokenCounts.resolvedInput)} tokens</>
+                    )}
+                  </span>
+                </div>
                 <button
                   onClick={() => activeStage && deleteStage(category, block, activeStage)}
                   className="p-1 text-sf-text-400 hover:text-sf-error rounded"
@@ -315,31 +546,48 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
                 className="textarea w-full flex-1 resize-none"
               />
               <div className="mt-2 flex justify-end gap-2 shrink-0">
-                <button
-                  className="btn btn-secondary flex items-center gap-2"
-                  title="Continue generating from the end of the current output"
-                >
-                  <FastForward size={14} />
-                  Continue
-                </button>
-                <button
-                  className="btn btn-secondary flex items-center gap-2"
-                  title="Stop generation"
-                >
-                  <Square size={14} />
-                  Stop
-                </button>
-                <button
-                  className="btn btn-secondary flex items-center gap-2"
-                  title="Regenerate the currently selected version"
-                >
-                  <RefreshCw size={14} />
-                  Regenerate
-                </button>
-                <button className="btn btn-primary flex items-center gap-2" title="Generate a new version">
-                  <Sparkles size={14} />
-                  Generate New
-                </button>
+                <Hint hint="editor-continue" position="top">
+                  <button
+                    onClick={handleContinue}
+                    disabled={isGenerating || !currentStage?.selected || !currentStage?.output[currentStage.selected]}
+                    className="btn btn-secondary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <FastForward size={14} />
+                    Continue
+                  </button>
+                </Hint>
+                <Hint hint="editor-stop" position="top">
+                  <button
+                    onClick={handleStopGeneration}
+                    disabled={!isGenerating}
+                    className={`btn flex items-center gap-2 ${
+                      isGenerating ? 'btn-secondary text-sf-warning' : 'btn-secondary disabled:opacity-50 disabled:cursor-not-allowed'
+                    }`}
+                  >
+                    <Square size={14} />
+                    Stop
+                  </button>
+                </Hint>
+                <Hint hint="editor-regenerate" position="top">
+                  <button
+                    onClick={handleRegenerate}
+                    disabled={isGenerating || !currentStage?.selected}
+                    className="btn btn-secondary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isGenerating ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                    Regenerate
+                  </button>
+                </Hint>
+                <Hint hint="editor-generate-new" position="top">
+                  <button
+                    onClick={handleGenerateNew}
+                    disabled={isGenerating}
+                    className="btn btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isGenerating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                    Generate New
+                  </button>
+                </Hint>
               </div>
             </div>
           </div>
@@ -357,14 +605,21 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
           {/* Output section */}
           <div className="flex-1 flex flex-col p-3 overflow-hidden">
             <div className="flex items-center justify-between mb-2">
-              <label className="text-sm font-medium text-sf-text-300">
-                OUTPUT {currentStage.selected && !compareVersions && `(${currentStage.selected} selected)`}
-                {compareVersions && (
-                  <span className="ml-2 text-sf-accent-400">
-                    Comparing: {compareVersions[0]} vs {compareVersions[1]}
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-sf-text-300">
+                  OUTPUT {currentStage.selected && !compareVersions && `(${currentStage.selected})`}
+                  {compareVersions && (
+                    <span className="ml-2 text-sf-accent-400">
+                      Comparing: {compareVersions[0]} vs {compareVersions[1]}
+                    </span>
+                  )}
+                </label>
+                {!compareVersions && tokenCounts.output > 0 && (
+                  <span className="text-xs text-sf-text-400 font-mono">
+                    ({formatTokenCount(tokenCounts.output)} tokens)
                   </span>
                 )}
-              </label>
+              </div>
               <div className="flex items-center gap-2">
                 {compareVersions ? (
                   <button
@@ -385,7 +640,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
             </div>
             {/* Version tabs */}
             <div className="flex items-center gap-1 mb-2">
-              {versions.map((version) => (
+              {versions.map((version, index) => (
                 editingVersion === version ? (
                   <input
                     key={version}
@@ -406,35 +661,77 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
                 ) : (
                   <button
                     key={version}
+                    draggable
+                    onDragStart={(e) => {
+                      setDraggedVersionIndex(index);
+                      e.dataTransfer.effectAllowed = 'move';
+                      e.dataTransfer.setData('text/plain', version);
+                    }}
+                    onDragEnd={() => {
+                      setDraggedVersionIndex(null);
+                      setDragOverVersionIndex(null);
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      if (draggedVersionIndex !== null && draggedVersionIndex !== index) {
+                        setDragOverVersionIndex(index);
+                      }
+                    }}
+                    onDragLeave={() => {
+                      setDragOverVersionIndex(null);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      if (draggedVersionIndex !== null && draggedVersionIndex !== index && activeStage) {
+                        reorderVersions(category, block, activeStage, draggedVersionIndex, index);
+                      }
+                      setDraggedVersionIndex(null);
+                      setDragOverVersionIndex(null);
+                    }}
                     onClick={(e) => handleVersionClick(version, e)}
                     onDoubleClick={() => {
                       setEditingVersion(version);
                       setEditingVersionName(version);
                     }}
-                    className={`px-2 py-0.5 text-xs rounded flex items-center gap-1 ${
+                    className={`group px-2 py-0.5 text-xs rounded flex items-center gap-1 ${
                       isInComparison(version)
                         ? 'bg-sf-accent-500 text-white ring-2 ring-sf-accent-300'
                         : currentStage.selected === version
                           ? 'bg-sf-accent-600 text-white'
                           : 'bg-sf-bg-700 text-sf-text-300 hover:bg-sf-bg-600'
+                    } ${draggedVersionIndex === index ? 'opacity-50' : ''} ${
+                      dragOverVersionIndex === index ? 'ring-2 ring-sf-accent-500' : ''
                     }`}
                   >
+                    <GripVertical size={10} className="opacity-0 group-hover:opacity-100 cursor-grab shrink-0" />
                     {version}
                     {currentStage.selected === version && !compareVersions && <Check size={12} />}
                     {isInComparison(version) && <Columns2 size={12} />}
                   </button>
                 )
               ))}
-              <button
-                onClick={handleAddVersion}
-                className="px-2 py-0.5 text-xs bg-sf-bg-700 text-sf-text-300 hover:bg-sf-bg-600 rounded"
-                title="Add Version"
-              >
-                <Plus size={12} />
-              </button>
+              <Hint hint="editor-add-version" position="bottom">
+                <button
+                  onClick={handleAddVersion}
+                  className="px-2 py-0.5 text-xs bg-sf-bg-700 text-sf-text-300 hover:bg-sf-bg-600 rounded"
+                >
+                  <Plus size={12} />
+                </button>
+              </Hint>
+              {/* Delete selected version button - separate from version tabs to avoid accidents */}
+              {currentStage.selected && versions.length > 1 && (
+                <Hint hint="editor-delete-version" position="bottom">
+                  <button
+                    onClick={() => handleDeleteVersion(currentStage.selected)}
+                    className="ml-2 px-2 py-0.5 text-xs bg-sf-bg-700 text-red-400 hover:bg-red-900/30 hover:text-red-300 rounded flex items-center gap-1"
+                  >
+                    <Trash2 size={10} />
+                  </button>
+                </Hint>
+              )}
             </div>
             {/* Version content */}
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-hidden">
               {compareVersions ? (
                 /* Side-by-side comparison view */
                 <div className="flex gap-3 h-full">
@@ -463,7 +760,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
                             updateVersionContent(category, block, activeStage, version, e.target.value);
                           }
                         }}
-                        className="textarea w-full flex-1 min-h-[200px]"
+                        className="textarea w-full flex-1"
                         placeholder="Content..."
                       />
                     </div>
@@ -477,7 +774,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
                       updateVersionContent(category, block, activeStage, currentStage.selected, e.target.value);
                     }
                   }}
-                  className="textarea w-full h-full min-h-[200px]"
+                  className="textarea w-full h-full"
                   placeholder="Generated content will appear here..."
                 />
               ) : (

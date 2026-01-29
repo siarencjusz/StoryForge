@@ -1,12 +1,19 @@
 import { TreePanel } from './components/TreePanel';
 import { EditorPanel } from './components/EditorPanel';
 import { DependencyPanel } from './components/DependencyPanel';
+import { LLMSettingsPanel } from './components/LLMSettingsPanel';
+import { Hint } from './components/Hint';
 import { useProjectStore } from './store/projectStore';
+import { useLLMStore } from './store/llmStore';
+import { useHintsStore } from './store/hintsStore';
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { openProjectFile, saveProjectFile, saveProjectFileAs } from './utils/fileUtils';
+import { openProjectFile, saveProjectFile, saveProjectFileAs, clearFileHandle } from './utils/fileUtils';
+import { Settings2 } from 'lucide-react';
 
 function App() {
   const { project, isDirty, newProject, loadProject, setDirty, getProjectForExport, secondarySelection, setSecondarySelection } = useProjectStore();
+  const { showSettings, setShowSettings, getActiveConfig, pingResults } = useLLMStore();
+  const { showHints, setShowHints } = useHintsStore();
   const [fileName, setFileName] = useState<string | null>(null);
 
   // Resizable panel widths (in pixels)
@@ -59,6 +66,7 @@ function App() {
     if (title !== null) {
       newProject(title, '');
       setFileName(null);
+      clearFileHandle(); // Clear the file handle so Save will prompt for location
     }
   }, [isDirty, newProject]);
 
@@ -72,31 +80,38 @@ function App() {
     if (result) {
       loadProject(result.project);
       setFileName(result.fileName);
+      // File handle is set by openProjectFile
     }
   }, [isDirty, loadProject]);
 
-  // Handler for Save Project
+  // Handler for Save Project (save to existing file, or prompt if new)
   const handleSave = useCallback(async () => {
     const projectData = getProjectForExport();
-    if (fileName) {
-      // Save to existing file (via download since we can't write directly)
-      saveProjectFile(projectData, fileName);
+    const savedFileName = await saveProjectFile(projectData);
+    if (savedFileName) {
+      setFileName(savedFileName);
       setDirty(false);
-    } else {
-      // Save As
-      const newFileName = await saveProjectFileAs(projectData);
-      if (newFileName) {
-        setFileName(newFileName);
-        setDirty(false);
-      }
     }
-  }, [fileName, getProjectForExport, setDirty]);
+  }, [getProjectForExport, setDirty]);
+
+  // Handler for Save As (always prompt for new filename)
+  const handleSaveAs = useCallback(async () => {
+    const projectData = getProjectForExport();
+    const newFileName = await saveProjectFileAs(projectData);
+    if (newFileName) {
+      setFileName(newFileName);
+      setDirty(false);
+    }
+  }, [getProjectForExport, setDirty]);
 
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey) {
-        if (e.key === 's') {
+        if (e.key === 's' && e.shiftKey) {
+          e.preventDefault();
+          handleSaveAs();
+        } else if (e.key === 's') {
           e.preventDefault();
           handleSave();
         } else if (e.key === 'o') {
@@ -110,67 +125,24 @@ function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleSave, handleOpen, handleNew]);
+  }, [handleSave, handleSaveAs, handleOpen, handleNew]);
 
-  // Initialize with a demo project for development
+  // Initialize with a demo project for development (only if no project exists)
   useEffect(() => {
-    newProject('My Story', 'Author');
-
-    // Add some demo content
     const store = useProjectStore.getState();
-    store.createCategory('prompts');
-    store.createBlock('prompts', 'generate_character');
-    store.addStage('prompts', 'generate_character', 'output', `Create a detailed character sheet including:
-- Name and aliases
-- Physical appearance
-- Personality traits and flaws
-- Background and motivations`);
-    store.addVersion('prompts', 'generate_character', 'output', 'v1', `Create a detailed character sheet including:
-- Name and aliases
-- Physical appearance
-- Personality traits and flaws
-- Background and motivations`);
-    store.selectVersion('prompts', 'generate_character', 'output', 'v1');
 
-    store.createCategory('character');
-    store.createBlock('character', 'alice');
-    store.addStage('character', 'alice', 'raw', `### INSTRUCTION:
-[prompts:generate_character]
+    // Only initialize demo project if there are no blocks yet
+    // (i.e., this is a fresh load, not a refresh with existing state)
+    if (Object.keys(store.project.blocks).length > 0) {
+      return; // Already have a project, don't overwrite
+    }
 
-### INPUT:
-A former ranger who tracks criminals in the Whisperwood.
-She has a mysterious past connected to the old dragon cults.
-
-### RESPONSE:`);
-    store.addVersion('character', 'alice', 'raw', 'v1', `Alice Thornwood, 28 years old, stands at the edge of the Whisperwood with keen eyes scanning the shadows. Her weathered leather armor bears the marks of countless pursuits through dense forest terrain.
-
-**Physical Appearance:**
-- Tall and lean, with the wiry strength of someone who lives by tracking
-- Dark brown hair kept in a practical braid
-- A thin scar runs along her left jawline
-- Grey-green eyes that seem to catch every movement
-
-**Personality:**
-- Patient and methodical, preferring observation to action
-- Struggles with trust after a betrayal in her past
-- Dry sense of humor that emerges in tense moments
-- Fiercely protective of the innocent
-
-**Background:**
-Former member of the Royal Rangers before the order was disbanded. Now works as a bounty hunter, though she's selective about her targets. Haunted by her connection to the dragon cults - her mother was a priestess before the Purge.`);
-    store.selectVersion('character', 'alice', 'raw', 'v1');
-    store.addStage('character', 'alice', 'summary', `Summarize the character in 2-3 sentences.
-[alice:raw]`);
-
-    store.createCategory('location');
-    store.createBlock('location', 'whisperwood');
-    store.addStage('location', 'whisperwood', 'raw', `An ancient forest that holds memories of those who enter.`);
-
-    store.toggleCategory('prompts');
-    store.toggleCategory('character');
-    store.toggleCategory('location');
-    store.setSelection({ category: 'character', block: 'alice' });
-    store.setDirty(false);
+    // Load the default demo project
+    import('./data/defaultProject').then(({ DEFAULT_PROJECT }) => {
+      store.loadProject(DEFAULT_PROJECT);
+      store.setSelection({ category: 'character', block: 'alice' });
+      store.setDirty(false);
+    });
   }, []);
 
   return (
@@ -186,9 +158,53 @@ Former member of the Royal Rangers before the order was disbanded. Now works as 
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={handleNew} className="btn btn-secondary text-sm" title="New Project (Ctrl+N)">New</button>
-          <button onClick={handleOpen} className="btn btn-secondary text-sm" title="Open Project (Ctrl+O)">Open</button>
-          <button onClick={handleSave} className="btn btn-primary text-sm" title="Save Project (Ctrl+S)">Save</button>
+          {/* Show Hints Checkbox */}
+          <Hint hint="hint-checkbox" position="bottom">
+            <label className="flex items-center gap-1.5 text-xs text-sf-text-400 cursor-pointer hover:text-sf-text-300">
+              <input
+                type="checkbox"
+                checked={showHints}
+                onChange={(e) => setShowHints(e.target.checked)}
+                className="w-3.5 h-3.5 rounded border-sf-bg-500 bg-sf-bg-700 text-sf-accent-500 focus:ring-sf-accent-500 focus:ring-offset-0"
+              />
+              <span>Show hints</span>
+            </label>
+          </Hint>
+          <div className="w-px h-6 bg-sf-bg-600" />
+          {/* LLM Status Indicator */}
+          <Hint hint="btn-llm-status" position="bottom">
+            {(() => {
+              const activeConfig = getActiveConfig();
+              const pingResult = activeConfig ? pingResults[activeConfig.id] : null;
+              return (
+                <button
+                  onClick={() => setShowSettings(true)}
+                  className="flex items-center gap-2 px-2 py-1 rounded hover:bg-sf-bg-700 text-sm"
+                >
+                  <div
+                    className={`w-2 h-2 rounded-full ${
+                      pingResult?.ok ? 'bg-green-500' : pingResult ? 'bg-red-500' : 'bg-sf-text-400'
+                    }`}
+                  />
+                  <span className="text-sf-text-300">{activeConfig?.name ?? 'No LLM'}</span>
+                  <Settings2 size={14} className="text-sf-text-400" />
+                </button>
+              );
+            })()}
+          </Hint>
+          <div className="w-px h-6 bg-sf-bg-600" />
+          <Hint hint="btn-new" position="bottom">
+            <button onClick={handleNew} className="btn btn-secondary text-sm">New</button>
+          </Hint>
+          <Hint hint="btn-open" position="bottom">
+            <button onClick={handleOpen} className="btn btn-secondary text-sm">Open</button>
+          </Hint>
+          <Hint hint="btn-save" position="bottom">
+            <button onClick={handleSave} className="btn btn-primary text-sm">Save</button>
+          </Hint>
+          <Hint hint="btn-save-as" position="bottom">
+            <button onClick={handleSaveAs} className="btn btn-secondary text-sm">Save As</button>
+          </Hint>
         </div>
       </header>
 
@@ -245,6 +261,9 @@ Former member of the Royal Rangers before the order was disbanded. Now works as 
           <DependencyPanel />
         </div>
       </div>
+
+      {/* LLM Settings Modal */}
+      {showSettings && <LLMSettingsPanel onClose={() => setShowSettings(false)} />}
     </div>
   );
 }

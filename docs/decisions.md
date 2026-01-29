@@ -17,15 +17,14 @@
 
 ### User Interface
 
-| Decision        | Choice                                         | Rationale                                                                    |
-|-----------------|------------------------------------------------|------------------------------------------------------------------------------|
-| UI Paradigm     | **Tree + Dependency Panel**                    | Familiar UX (VS Code-like), scales to 100+ blocks, more writing space        |
-| UI Technology   | FastAPI backend + React frontend               | Clear separation, async LLM support, modern tooling                          |
-| Frontend Stack  | React 19, TypeScript, Tailwind CSS, Vite       | Type safety, rapid development, modern DX                                    |
-| State Management| Zustand                                        | Lightweight, simple API, no boilerplate                                      |
-| Backend Stack   | Python 3.12+, FastAPI, Pydantic, uvicorn       | Async support, validation, auto-docs                                         |
-| Theme           | **Dark theme** (implemented)                   | Easier on eyes for long writing sessions, modern aesthetic                   |
-| Standalone      | Web-based, no editor integrations              | Focus on core product                                                        |
+| Decision         | Choice                                   | Rationale                                                             |
+|------------------|------------------------------------------|-----------------------------------------------------------------------|
+| UI Paradigm      | **Tree + Dependency Panel**              | Familiar UX (VS Code-like), scales to 100+ blocks, more writing space |
+| UI Technology    | React frontend (no backend)              | Simpler architecture, works offline, browser File API for storage     |
+| Frontend Stack   | React 19, TypeScript, Tailwind CSS, Vite | Type safety, rapid development, modern DX                             |
+| State Management | Zustand with persistence                 | Lightweight, simple API, localStorage persistence                     |
+| Theme            | **Dark theme** (implemented)             | Easier on eyes for long writing sessions, modern aesthetic            |
+| Standalone       | Web-based, no editor integrations        | Focus on core product                                                 |
 
 ### UI Implementation Details
 
@@ -84,39 +83,24 @@ See [schemas/schema_v1.md](./schemas/schema_v1.md) for complete YAML examples.
 
 | Decision              | Choice                                            | Rationale                                                  |
 |-----------------------|---------------------------------------------------|------------------------------------------------------------|
-| API Approach          | Direct OpenAI API with abstraction layer          | Simple, no heavy dependencies, easy to add providers later |
-| Initial Provider      | OpenAI                                            | Wide adoption, good documentation                          |
-| Provider Abstraction  | Custom interface (no LangChain/LiteLLM)           | Keep dependencies minimal, full control                    |
-| **Tool-Level Config** | Separate YAML files in `~/.storyforge/providers/` | Swap providers easily, keep secrets out of projects        |
-| Project Config        | Reference provider by name                        | Projects don't contain API keys                            |
-| Parameters            | temperature, max_tokens, top_p, etc.              | Standard LLM controls                                      |
-| Token Counting        | Calculated at runtime, displayed in UI            | Not stored (depends on tokenizer/LLM)                      |
-| Unresolved References | Configurable: block or placeholder                | Draft mode vs strict mode                                  |
-
-**Provider Configuration Example** (`~/.storyforge/providers/openai.yaml`):
-```yaml
-name: openai-main
-provider: openai
-api_key: sk-...  # Or use env var
-default_model: gpt-4o
-```
-
-**Project references provider by name**:
-```yaml
-settings:
-  llm_provider: openai-main  # References ~/.storyforge/providers/openai.yaml
-  llm_overrides:
-    temperature: 0.8
-```
+| API Approach          | Direct fetch to OpenAI-compatible APIs            | Simple, works from browser, no backend needed              |
+| Initial Provider      | Any OpenAI-compatible endpoint (local or cloud)   | Flexibility, works with local LLMs                         |
+| Provider Abstraction  | Custom service layer in TypeScript                | Keep dependencies minimal, full control                    |
+| Configuration         | Stored in browser localStorage                    | No external config files needed, persists across sessions  |
+| Parameters            | temperature, max_tokens, model                    | Standard LLM controls                                      |
+| Token Counting        | Estimated at runtime, displayed in UI             | Approximation based on text, API usage when available      |
+| Streaming             | Server-Sent Events (SSE)                          | Live token display, ability to stop generation             |
+| Unresolved References | Error shown, blocks generation                    | Fail-safe approach                                         |
 
 ### Development
 
-| Decision        | Choice          | Rationale                       |
-|-----------------|-----------------|---------------------------------|
-| Language        | Python 3.11+    | Modern features, LLM ecosystem  |
-| Package Manager | uv              | Fast, modern, reliable          |
-| Testing         | pytest          | Standard, well-supported        |
-| CLI             | None (UI-only)  | Web UI is the only interface    |
+| Decision        | Choice                        | Rationale                       |
+|-----------------|-------------------------------|---------------------------------|
+| Language        | TypeScript                    | Type safety, modern tooling     |
+| Package Manager | npm                           | Standard, well-supported        |
+| Build Tool      | Vite                          | Fast, modern, great DX          |
+| Testing         | (not yet implemented)         | Consider Vitest for future      |
+| CLI             | None (UI-only)                | Web UI is the only interface    |
 
 ---
 
@@ -150,6 +134,8 @@ settings:
 
 | Approach                          | Reason Abandoned                                                                          |
 |-----------------------------------|-------------------------------------------------------------------------------------------|
+| **Python Backend**                | Unnecessary complexity; browser can call LLM APIs directly                                |
+| **FastAPI + uvicorn**             | Frontend-only approach is simpler, works offline, no server needed                        |
 | **Canvas/Graph View**             | Complexity; tree view is sufficient, may reconsider in distant future                     |
 | **Composite Block Type**          | Confusing semantics; user can manually merge versions instead                             |
 | **Global Block Name Uniqueness**  | Too restrictive; `[character:shadow]` and `[location:shadow]` should coexist              |
