@@ -101,5 +101,63 @@ npm run lint
 # Preview production build
 npm run preview
 ```
+
+## Building Desktop Apps
+
+StoryForge can be packaged as a desktop application for Windows and Linux using Electron.
+
+### Prerequisites
+- Node.js 18+ 
+- For Windows builds on Linux: `wine` is required for cross-compilation
+- For Linux builds: `dpkg` (for .deb) or `rpm` (for .rpm) tools
+
+### Build Commands
+```bash
+# Install dependencies first
+npm install
+
+# Build for current platform
+npm run electron:build
+
+# Build for Windows (creates .exe installer and portable)
+# Note: Requires wine on Linux for cross-compilation
+npm run electron:build:win
+
+# Build for Linux (creates .AppImage and .deb)
+npm run electron:build:linux
+
+# Build for both Windows and Linux
+npm run electron:build:all
+```
+
+### Output
+Built applications are placed in the `release/` directory:
+- **Windows**: `StoryForge Setup x.x.x.exe` (installer) and `StoryForge x.x.x.exe` (portable)
+- **Linux**: `StoryForge-x.x.x.AppImage` (portable) and `storyforge_x.x.x_amd64.deb` (Debian/Ubuntu)
+
+### Installing on Ubuntu/Debian
+```bash
+sudo dpkg -i release/storyforge_0.1.0_amd64.deb
+```
+
+### Running AppImage on Linux
+```bash
+chmod +x release/StoryForge-0.1.0.AppImage
+./release/StoryForge-0.1.0.AppImage
+```
+
+### Development with Electron
+```bash
+# Run in development mode with Electron
+npm run electron:dev
+```
+
+## Web Deployment
+The `dist/` folder after `npm run build` can be deployed to any static hosting:
+- GitHub Pages
+- Netlify
+- Vercel
+- Any web server (nginx, Apache, etc.)
+
 ## License
 MIT License - see [LICENSE](LICENSE) file
