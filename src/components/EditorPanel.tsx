@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Plus, Check, Trash2, RefreshCw, X, Columns2, GripVertical, Sparkles, Square, FastForward, GripHorizontal, Loader2 } from 'lucide-react';
+import { Plus, Check, Trash2, RefreshCw, X, Columns2, GripVertical, Sparkles, Square, FastForward, GripHorizontal, Loader2, Eye } from 'lucide-react';
 import { useProjectStore } from '../store/projectStore';
 import { useLLMStore } from '../store/llmStore';
 import { resolveReferences } from '../utils/referenceUtils';
@@ -60,6 +60,8 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
   const [inputHeight, setInputHeight] = useState(250); // Default height in pixels
   const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Prompt preview modal
+  const [showPromptPreview, setShowPromptPreview] = useState(false);
 
   // Handle resize drag
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -130,8 +132,11 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
       return;
     }
 
+    // Get current versions directly from store to avoid stale closure issues
+    const currentVersions = listVersions(category, block, activeStage);
+
     // Create a new version for the output
-    const nextVersion = `v${versions.length + 1}`;
+    const nextVersion = `v${currentVersions.length + 1}`;
     addVersion(category, block, activeStage, nextVersion, '');
     selectVersion(category, block, activeStage, nextVersion);
     setCompareVersions(null);
@@ -153,7 +158,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
         updateVersionContent(category, block, activeStage, nextVersion, `[Generation Error: ${error}]`);
       }
     );
-  }, [activeStage, currentStage, selection, versions, category, block, project.blocks, getActiveConfig, setShowSettings, generateStreaming, addVersion, selectVersion, updateVersionContent]);
+  }, [activeStage, currentStage, selection, category, block, project.blocks, getActiveConfig, setShowSettings, generateStreaming, addVersion, selectVersion, updateVersionContent, listVersions]);
 
   const handleRegenerate = useCallback(() => {
     if (!activeStage || !currentStage || !currentStage.selected || !selection) return;
@@ -285,28 +290,55 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
     };
   }, [currentStage, project.blocks]);
 
+  // Compute the full prompt preview (what would be sent to LLM)
+  const promptPreview = useMemo(() => {
+    if (!currentStage) return { resolved: '', errors: [], rawInput: '', messages: [] as Array<{ role: string; content: string }> };
+
+    const { resolved, errors } = resolveReferences(currentStage.input, project.blocks);
+    const selectedOutput = currentStage.selected ? currentStage.output[currentStage.selected] : '';
+
+    // Build the messages array that would be sent to the LLM
+    const messages: Array<{ role: string; content: string }> = [
+      { role: 'user', content: resolved }
+    ];
+
+    // If there's existing output (for continue), show that too
+    if (selectedOutput) {
+      messages.push({ role: 'assistant', content: selectedOutput });
+    }
+
+    return {
+      resolved,
+      errors,
+      rawInput: currentStage.input,
+      messages,
+    };
+  }, [currentStage, project.blocks]);
+
   // Handler to delete a version with confirmation
   const handleDeleteVersion = useCallback((version: string) => {
     if (!activeStage) return;
 
-    if (versions.length <= 1) {
-      alert('Cannot delete the last version');
-      return;
-    }
-
     const confirmed = window.confirm(`Delete version "${version}"? This cannot be undone.`);
     if (!confirmed) return;
 
-    deleteVersion(category, block, activeStage, version);
+    if (versions.length <= 1) {
+      // If this is the last version, create a fresh v1 to replace it
+      deleteVersion(category, block, activeStage, version);
+      addVersion(category, block, activeStage, 'v1', '');
+      selectVersion(category, block, activeStage, 'v1');
+    } else {
+      deleteVersion(category, block, activeStage, version);
 
-    // If we deleted the selected version, select another one
-    if (currentStage?.selected === version) {
-      const remaining = versions.filter(v => v !== version);
-      if (remaining.length > 0) {
-        selectVersion(category, block, activeStage, remaining[0]);
+      // If we deleted the selected version, select another one
+      if (currentStage?.selected === version) {
+        const remaining = versions.filter(v => v !== version);
+        if (remaining.length > 0) {
+          selectVersion(category, block, activeStage, remaining[0]);
+        }
       }
     }
-  }, [activeStage, versions, category, block, currentStage, deleteVersion, selectVersion]);
+  }, [activeStage, versions, category, block, currentStage, deleteVersion, selectVersion, addVersion]);
 
   // No selection state - early return AFTER all hooks
   if (!selection) {
@@ -546,6 +578,16 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
                 className="textarea w-full flex-1 resize-none"
               />
               <div className="mt-2 flex justify-end gap-2 shrink-0">
+                <Hint hint="editor-preview" position="top">
+                  <button
+                    onClick={() => setShowPromptPreview(true)}
+                    disabled={!currentStage?.input}
+                    className="btn btn-secondary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Eye size={14} />
+                    Preview
+                  </button>
+                </Hint>
                 <Hint hint="editor-continue" position="top">
                   <button
                     onClick={handleContinue}
@@ -719,7 +761,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
                 </button>
               </Hint>
               {/* Delete selected version button - separate from version tabs to avoid accidents */}
-              {currentStage.selected && versions.length > 1 && (
+              {currentStage.selected && (
                 <Hint hint="editor-delete-version" position="bottom">
                   <button
                     onClick={() => handleDeleteVersion(currentStage.selected)}
@@ -799,6 +841,84 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
             >
               Add a stage
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Prompt Preview Modal */}
+      {showPromptPreview && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-sf-bg-800 rounded-lg shadow-xl border border-sf-bg-600 w-[80vw] max-w-4xl max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-sf-bg-600">
+              <h2 className="text-lg font-semibold text-sf-text-100">Prompt Preview</h2>
+              <button
+                onClick={() => setShowPromptPreview(false)}
+                className="p-1 hover:bg-sf-bg-700 rounded text-sf-text-400 hover:text-sf-text-200"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-4 space-y-4">
+              {/* Errors if any */}
+              {promptPreview.errors.length > 0 && (
+                <div className="bg-red-900/20 border border-red-500/50 rounded p-3">
+                  <h3 className="text-sm font-semibold text-red-400 mb-2">Reference Errors</h3>
+                  <ul className="text-sm text-red-300 list-disc list-inside">
+                    {promptPreview.errors.map((err, i) => (
+                      <li key={i}>{err}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Raw Input */}
+              <div>
+                <h3 className="text-sm font-semibold text-sf-text-300 mb-2">Raw Input (with references)</h3>
+                <pre className="bg-sf-bg-900 rounded p-3 text-sm text-sf-text-200 whitespace-pre-wrap overflow-auto max-h-48 border border-sf-bg-600">
+                  {promptPreview.rawInput || '(empty)'}
+                </pre>
+              </div>
+
+              {/* Resolved Prompt */}
+              <div>
+                <h3 className="text-sm font-semibold text-sf-text-300 mb-2">
+                  Resolved Prompt (sent to LLM as user message)
+                  <span className="ml-2 text-xs font-mono text-sf-text-400">
+                    ~{formatTokenCount(estimateTokens(promptPreview.resolved))} tokens
+                  </span>
+                </h3>
+                <pre className="bg-sf-bg-900 rounded p-3 text-sm text-sf-text-200 whitespace-pre-wrap overflow-auto max-h-96 border border-sf-bg-600">
+                  {promptPreview.resolved || '(empty)'}
+                </pre>
+              </div>
+
+              {/* Messages array visualization */}
+              <div>
+                <h3 className="text-sm font-semibold text-sf-text-300 mb-2">Messages Array (API Format)</h3>
+                <div className="space-y-2">
+                  {promptPreview.messages.map((msg, i) => (
+                    <div key={i} className="bg-sf-bg-900 rounded border border-sf-bg-600 overflow-hidden">
+                      <div className={`px-3 py-1 text-xs font-semibold ${
+                        msg.role === 'user' ? 'bg-blue-900/30 text-blue-400' : 'bg-green-900/30 text-green-400'
+                      }`}>
+                        {msg.role.toUpperCase()}
+                      </div>
+                      <pre className="p-3 text-sm text-sf-text-200 whitespace-pre-wrap overflow-auto max-h-48">
+                        {msg.content || '(empty)'}
+                      </pre>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="p-4 border-t border-sf-bg-600 flex justify-end">
+              <button
+                onClick={() => setShowPromptPreview(false)}
+                className="btn btn-primary"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

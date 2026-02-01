@@ -16,6 +16,10 @@ function App() {
   const { showHints, setShowHints } = useHintsStore();
   const [fileName, setFileName] = useState<string | null>(null);
 
+  // New project dialog state
+  const [showNewProjectDialog, setShowNewProjectDialog] = useState(false);
+  const [newProjectTitle, setNewProjectTitle] = useState('Untitled Project');
+
   // Resizable panel widths (in pixels)
   const [treePanelWidth, setTreePanelWidth] = useState(256);
   const [depPanelWidth, setDepPanelWidth] = useState(256);
@@ -62,13 +66,18 @@ function App() {
       const confirmed = window.confirm('You have unsaved changes. Create a new project anyway?');
       if (!confirmed) return;
     }
-    const title = prompt('Project title:', 'Untitled Project');
-    if (title !== null) {
-      newProject(title, '');
-      setFileName(null);
-      clearFileHandle(); // Clear the file handle so Save will prompt for location
-    }
-  }, [isDirty, newProject]);
+    // Show custom dialog instead of window.prompt (which doesn't work in Electron)
+    setNewProjectTitle('Untitled Project');
+    setShowNewProjectDialog(true);
+  }, [isDirty]);
+
+  // Handler to confirm new project creation
+  const handleConfirmNewProject = useCallback(() => {
+    newProject(newProjectTitle || 'Untitled Project', '');
+    setFileName(null);
+    clearFileHandle();
+    setShowNewProjectDialog(false);
+  }, [newProject, newProjectTitle]);
 
   // Handler for Open Project
   const handleOpen = useCallback(async () => {
@@ -264,6 +273,41 @@ function App() {
 
       {/* LLM Settings Modal */}
       {showSettings && <LLMSettingsPanel onClose={() => setShowSettings(false)} />}
+
+      {/* New Project Dialog */}
+      {showNewProjectDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-sf-bg-800 rounded-lg p-6 w-96 shadow-xl border border-sf-bg-600">
+            <h2 className="text-lg font-semibold text-sf-text-100 mb-4">New Project</h2>
+            <label className="block text-sm text-sf-text-300 mb-2">Project Title</label>
+            <input
+              type="text"
+              value={newProjectTitle}
+              onChange={(e) => setNewProjectTitle(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleConfirmNewProject();
+                if (e.key === 'Escape') setShowNewProjectDialog(false);
+              }}
+              className="w-full px-3 py-2 bg-sf-bg-700 border border-sf-bg-500 rounded text-sf-text-100 focus:outline-none focus:border-sf-accent-500 mb-4"
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowNewProjectDialog(false)}
+                className="btn btn-secondary"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmNewProject}
+                className="btn btn-primary"
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
