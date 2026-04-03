@@ -4,9 +4,33 @@
  */
 
 import type { Block, Blocks } from '../types';
+import { DEFAULT_STAGE_PRIORITY } from '../constants';
 
 // Pattern to match references like [block], [category:block], or [category:block:stage]
 export const REFERENCE_PATTERN = /\[([a-zA-Z_][a-zA-Z0-9_]*(?::[a-zA-Z_][a-zA-Z0-9_]*){0,2})]/g;
+
+/** Parsed reference — result of splitting a `category:block:stage` string */
+export interface ParsedRef {
+  category?: string;
+  block: string;
+  stage?: string;
+}
+
+/**
+ * Parse a reference string into its component parts.
+ * Returns `null` for invalid formats (more than 3 colon-separated parts).
+ *
+ * - `"block"`              → `{ block }`
+ * - `"category:block"`     → `{ category, block }`
+ * - `"category:block:stage"` → `{ category, block, stage }`
+ */
+export function parseRef(ref: string): ParsedRef | null {
+  const parts = ref.split(':');
+  if (parts.length === 1) return { block: parts[0] };
+  if (parts.length === 2) return { category: parts[0], block: parts[1] };
+  if (parts.length === 3) return { category: parts[0], block: parts[1], stage: parts[2] };
+  return null;
+}
 
 interface ResolvedReference {
   original: string;    // The original [ref] text
@@ -38,14 +62,9 @@ export function getBlockOutput(
     return stage.selected ? (stage.output[stage.selected] ?? null) : null;
   }
 
-  // Otherwise, try to find default stage
-  // Priority: 'output', 'raw', first stage
+  // Otherwise, try to find default stage using priority list
   const stageNames = Object.keys(blockData);
-  const targetStage = stageNames.includes('output')
-    ? 'output'
-    : stageNames.includes('raw')
-      ? 'raw'
-      : stageNames[0];
+  const targetStage = DEFAULT_STAGE_PRIORITY.find(s => stageNames.includes(s)) ?? stageNames[0];
 
   if (!targetStage) return null;
 
@@ -75,58 +94,48 @@ function findBlockAcrossCategories(
  * Resolve a single reference
  */
 function resolveReference(ref: string, blocks: Blocks): { content: string | null; error?: string; warning?: string } {
-  const parts = ref.split(':');
+  const parsed = parseRef(ref);
+  if (!parsed) return { content: null, error: `Invalid reference format: '${ref}'` };
 
-  if (parts.length === 1) {
+  if (!parsed.category) {
     // Just block name - search all categories
-    const found = findBlockAcrossCategories(blocks, parts[0]);
+    const found = findBlockAcrossCategories(blocks, parsed.block);
     if (!found) {
-      return { content: null, error: `Block '${parts[0]}' not found` };
+      return { content: null, error: `Block '${parsed.block}' not found` };
     }
     const content = getBlockOutput(blocks, found.category, found.block);
     if (content === null) {
-      return { content: null, error: `Block '${parts[0]}' has no selected output` };
+      return { content: null, error: `Block '${parsed.block}' has no selected output` };
     }
     // Warn if the block exists in multiple categories
     if (found.allCategories.length > 1) {
       return {
         content,
-        warning: `Ambiguous: [${parts[0]}] exists in categories: ${found.allCategories.join(', ')}. Using '${found.allCategories[0]}'. Qualify as [category:${parts[0]}] to be explicit.`,
+        warning: `Ambiguous: [${parsed.block}] exists in categories: ${found.allCategories.join(', ')}. Using '${found.allCategories[0]}'. Qualify as [category:${parsed.block}] to be explicit.`,
       };
     }
     return { content };
   }
 
-  if (parts.length === 2) {
-    // category:block
-    const [category, blockName] = parts;
-    const content = getBlockOutput(blocks, category, blockName);
-    if (content === null) {
-      const catExists = blocks[category];
-      if (!catExists) {
-        return { content: null, error: `Category '${category}' not found` };
-      }
-      const blockExists = catExists[blockName];
-      if (!blockExists) {
-        return { content: null, error: `Block '${category}:${blockName}' not found` };
-      }
-      return { content: null, error: `Block '${category}:${blockName}' has no selected output` };
-    }
-    return { content };
-  }
-
-  if (parts.length === 3) {
-    // category:block:stage
-    const [category, blockName, stageName] = parts;
-    const content = getBlockOutput(blocks, category, blockName, stageName);
-    if (content === null) {
+  // Qualified reference (2-part or 3-part)
+  const content = getBlockOutput(blocks, parsed.category, parsed.block, parsed.stage);
+  if (content === null) {
+    if (parsed.stage) {
       return { content: null, error: `Reference '${ref}' not found or has no selected output` };
     }
-    return { content };
+    const catExists = blocks[parsed.category];
+    if (!catExists) {
+      return { content: null, error: `Category '${parsed.category}' not found` };
+    }
+    const blockExists = catExists[parsed.block];
+    if (!blockExists) {
+      return { content: null, error: `Block '${parsed.category}:${parsed.block}' not found` };
+    }
+    return { content: null, error: `Block '${parsed.category}:${parsed.block}' has no selected output` };
   }
-
-  return { content: null, error: `Invalid reference format: '${ref}'` };
+  return { content };
 }
+
 
 /**
  * Resolve all references in an input text
@@ -185,24 +194,14 @@ export function propagateBlockRename(
   newBlockName: string
 ): string {
   return text.replace(REFERENCE_PATTERN, (match, ref: string) => {
-    const parts = ref.split(':');
+    const parsed = parseRef(ref);
+    if (!parsed || parsed.block !== oldBlockName) return match;
+    // If qualified, category must match
+    if (parsed.category && parsed.category !== category) return match;
 
-    // [oldBlock] → [newBlock]
-    if (parts.length === 1 && parts[0] === oldBlockName) {
-      return `[${newBlockName}]`;
-    }
-
-    // [category:oldBlock] → [category:newBlock]
-    if (parts.length === 2 && parts[0] === category && parts[1] === oldBlockName) {
-      return `[${category}:${newBlockName}]`;
-    }
-
-    // [category:oldBlock:stage] → [category:newBlock:stage]
-    if (parts.length === 3 && parts[0] === category && parts[1] === oldBlockName) {
-      return `[${category}:${newBlockName}:${parts[2]}]`;
-    }
-
-    return match;
+    if (!parsed.category) return `[${newBlockName}]`;
+    if (parsed.stage) return `[${parsed.category}:${newBlockName}:${parsed.stage}]`;
+    return `[${parsed.category}:${newBlockName}]`;
   });
 }
 
@@ -221,19 +220,11 @@ export function propagateCategoryRename(
   newCategoryName: string
 ): string {
   return text.replace(REFERENCE_PATTERN, (match, ref: string) => {
-    const parts = ref.split(':');
+    const parsed = parseRef(ref);
+    if (!parsed || !parsed.category || parsed.category !== oldCategoryName) return match;
 
-    // [oldCat:block] → [newCat:block]
-    if (parts.length === 2 && parts[0] === oldCategoryName) {
-      return `[${newCategoryName}:${parts[1]}]`;
-    }
-
-    // [oldCat:block:stage] → [newCat:block:stage]
-    if (parts.length === 3 && parts[0] === oldCategoryName) {
-      return `[${newCategoryName}:${parts[1]}:${parts[2]}]`;
-    }
-
-    return match;
+    if (parsed.stage) return `[${newCategoryName}:${parsed.block}:${parsed.stage}]`;
+    return `[${newCategoryName}:${parsed.block}]`;
   });
 }
 
@@ -283,21 +274,26 @@ export function parseReferences(text: string): string[] {
 }
 
 /**
+ * Remove all reference brackets from text, leaving only the non-reference content.
+ */
+export function stripReferences(text: string): string {
+  return text.replace(REFERENCE_PATTERN, '');
+}
+
+/**
  * Check whether a reference string resolves to a valid target in blocks.
  */
 export function isReferenceValid(ref: string, blocks: Blocks): boolean {
-  const parts = ref.split(':');
+  const parsed = parseRef(ref);
+  if (!parsed) return false;
 
-  if (parts.length === 1) {
-    return findBlockAcrossCategories(blocks, parts[0]) !== null;
+  if (!parsed.category) {
+    return findBlockAcrossCategories(blocks, parsed.block) !== null;
   }
-  if (parts.length === 2) {
-    return !!(blocks[parts[0]]?.[parts[1]]);
+  if (parsed.stage) {
+    return !!(blocks[parsed.category]?.[parsed.block]?.[parsed.stage]);
   }
-  if (parts.length === 3) {
-    return !!(blocks[parts[0]]?.[parts[1]]?.[parts[2]]);
-  }
-  return false;
+  return !!(blocks[parsed.category]?.[parsed.block]);
 }
 
 /**
@@ -305,20 +301,15 @@ export function isReferenceValid(ref: string, blocks: Blocks): boolean {
  * Handles 1-part (`[block]`), 2-part (`[cat:block]`), and 3-part (`[cat:block:stage]`) formats.
  */
 export function getReferenceOutput(ref: string, blocks: Blocks): string | null {
-  const parts = ref.split(':');
+  const parsed = parseRef(ref);
+  if (!parsed) return null;
 
-  if (parts.length === 1) {
-    const found = findBlockAcrossCategories(blocks, parts[0]);
+  if (!parsed.category) {
+    const found = findBlockAcrossCategories(blocks, parsed.block);
     if (!found) return null;
     return getBlockOutput(blocks, found.category, found.block);
   }
-  if (parts.length === 2) {
-    return getBlockOutput(blocks, parts[0], parts[1]);
-  }
-  if (parts.length === 3) {
-    return getBlockOutput(blocks, parts[0], parts[1], parts[2]);
-  }
-  return null;
+  return getBlockOutput(blocks, parsed.category, parsed.block, parsed.stage);
 }
 
 /**
@@ -334,18 +325,13 @@ export function referencePointsToBlock(
   targetCategory: string,
   targetBlock: string,
 ): boolean {
-  const parts = ref.split(':');
+  const parsed = parseRef(ref);
+  if (!parsed) return false;
 
-  if (parts.length === 1) {
-    return parts[0] === targetBlock;
+  if (!parsed.category) {
+    return parsed.block === targetBlock;
   }
-  if (parts.length === 2) {
-    return parts[0] === targetCategory && parts[1] === targetBlock;
-  }
-  if (parts.length === 3) {
-    return parts[0] === targetCategory && parts[1] === targetBlock;
-  }
-  return false;
+  return parsed.category === targetCategory && parsed.block === targetBlock;
 }
 
 /** Segment type for highlighted input rendering */

@@ -4,8 +4,9 @@ import { useLLMStore } from '../store/llmStore';
 import { useMemo } from 'react';
 import { estimateTokens, formatTokenCount } from '../utils/tokenUtils';
 import {
-  REFERENCE_PATTERN,
   parseReferences,
+  stripReferences,
+  parseRef,
   isReferenceValid,
   getReferenceOutput,
   referencePointsToBlock,
@@ -29,7 +30,7 @@ export function DependencyPanel() {
     if (blockData) {
       for (const stageData of Object.values(blockData)) {
         // Count tokens in the stage input (excluding resolved references)
-        const inputWithoutRefs = stageData.input?.replace(REFERENCE_PATTERN, '') || '';
+        const inputWithoutRefs = stripReferences(stageData.input || '');
         totalInputTokens += estimateTokens(inputWithoutRefs);
 
         const refs = parseReferences(stageData.input || '');
@@ -37,20 +38,15 @@ export function DependencyPanel() {
           // Avoid duplicates
           if (uses.some(u => u.ref === ref)) continue;
 
-          const parts = ref.split(':');
+          const parsed = parseRef(ref);
+          if (!parsed) continue;
           const valid = isReferenceValid(ref, project.blocks);
           const refContent = getReferenceOutput(ref, project.blocks);
           const tokens = refContent ? estimateTokens(refContent) : 0;
 
           totalInputTokens += tokens;
 
-          if (parts.length === 1) {
-            uses.push({ ref, block: parts[0], isValid: valid, tokens });
-          } else if (parts.length === 2) {
-            uses.push({ ref, category: parts[0], block: parts[1], isValid: valid, tokens });
-          } else if (parts.length === 3) {
-            uses.push({ ref, category: parts[0], block: parts[1], stage: parts[2], isValid: valid, tokens });
-          }
+          uses.push({ ref, category: parsed.category, block: parsed.block, stage: parsed.stage, isValid: valid, tokens });
         }
       }
     }

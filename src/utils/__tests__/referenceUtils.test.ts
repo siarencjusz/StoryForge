@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   resolveReferences,
   getInputSegments,
+  parseRef,
   parseReferences,
   isReferenceValid,
   getReferenceOutput,
@@ -11,6 +12,32 @@ import {
   transformAllInputs,
 } from '../referenceUtils';
 import type { Blocks } from '../../types';
+
+// ---------------------------------------------------------------------------
+// parseRef
+// ---------------------------------------------------------------------------
+
+describe('parseRef', () => {
+  it('parses 1-part reference (block only)', () => {
+    expect(parseRef('alice')).toEqual({ block: 'alice' });
+  });
+
+  it('parses 2-part reference (category:block)', () => {
+    expect(parseRef('characters:alice')).toEqual({ category: 'characters', block: 'alice' });
+  });
+
+  it('parses 3-part reference (category:block:stage)', () => {
+    expect(parseRef('characters:alice:raw')).toEqual({ category: 'characters', block: 'alice', stage: 'raw' });
+  });
+
+  it('returns null for 4+ part reference', () => {
+    expect(parseRef('a:b:c:d')).toBeNull();
+  });
+
+  it('returns null for empty-split edge case with many colons', () => {
+    expect(parseRef('a:b:c:d:e')).toBeNull();
+  });
+});
 
 // ---------------------------------------------------------------------------
 // propagateBlockRename

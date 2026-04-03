@@ -4,11 +4,14 @@ import { useProjectStore } from '../store/projectStore';
 import { useLLMStore } from '../store/llmStore';
 import { resolveReferences } from '../utils/referenceUtils';
 import { estimateTokens, formatTokenCount } from '../utils/tokenUtils';
+import { DEFAULT_STAGE_NAME, nextVersionKey } from '../constants';
+import { toast } from 'sonner';
 import { Hint } from './Hint';
 import { HighlightedTextarea } from './HighlightedTextarea';
 import { StageTabs } from './editor/StageTabs';
 import { OutputSection } from './editor/OutputSection';
 import { PromptPreviewModal } from './editor/PromptPreviewModal';
+import { useResize } from '../hooks/useResize';
 import type { Selection } from '../types';
 
 interface EditorPanelProps {
@@ -48,42 +51,18 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
   const [activeStage, setActiveStage] = useState<string | null>(null);
   // Comparison mode: track up to 2 versions for side-by-side view
   const [compareVersions, setCompareVersions] = useState<[string, string] | null>(null);
-  // Resizable input panel
-  const [inputHeight, setInputHeight] = useState(250);
-  const [isResizing, setIsResizing] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
   // Prompt preview modal
   const [showPromptPreview, setShowPromptPreview] = useState(false);
 
-  // Handle resize drag
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsResizing(true);
-  }, []);
-
-  useEffect(() => {
-    if (!isResizing) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!containerRef.current) return;
-      const containerRect = containerRef.current.getBoundingClientRect();
-      const newHeight = e.clientY - containerRect.top;
-      const maxHeight = containerRect.height - 150;
-      setInputHeight(Math.max(100, Math.min(newHeight, maxHeight)));
-    };
-
-    const handleMouseUp = () => {
-      setIsResizing(false);
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isResizing]);
+  // Resizable input panel
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputResize = useResize({
+    direction: 'vertical',
+    containerRef,
+    initial: 250,
+    min: 100,
+    max: (rect) => rect.height - 150,
+  });
 
   // Reset active stage when selection changes
   useEffect(() => {
@@ -105,124 +84,76 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
     }
   }, [stages, activeStage]);
 
-  // Generation handlers
-  const handleGenerateNew = useCallback(() => {
-    if (!activeStage || !selection) return;
+  // Shared generation preamble: validates state, resolves references, returns resolved prompt + stage
+  const prepareGeneration = useCallback((): { resolved: string; stage: import('../types').Stage } | null => {
+    if (!activeStage || !selection) return null;
 
     const freshBlocks = useProjectStore.getState().project.blocks;
     const stage = getStage(category, block, activeStage);
-    if (!stage) return;
+    if (!stage) return null;
 
-    const activeConfig = getActiveConfig();
-    if (!activeConfig) {
+    if (!getActiveConfig()) {
       setShowSettings(true);
-      return;
+      return null;
     }
 
     const { resolved, errors } = resolveReferences(stage.input, freshBlocks);
-
     if (errors.length > 0) {
-      alert(`Cannot generate: Missing references:\n${errors.join('\n')}`);
-      return;
+      toast.error(`Cannot generate: Missing references:\n${errors.join('\n')}`);
+      return null;
     }
 
-    const currentVersions = listVersions(category, block, activeStage);
-    const nextVersion = `v${currentVersions.length + 1}`;
-    addVersion(category, block, activeStage, nextVersion, '');
-    selectVersion(category, block, activeStage, nextVersion);
+    return { resolved, stage };
+  }, [activeStage, selection, category, block, getStage, getActiveConfig, setShowSettings]);
+
+  // Generation handlers
+  const handleGenerateNew = useCallback(() => {
+    const prep = prepareGeneration();
+    if (!prep) return;
+
+    const currentVersions = listVersions(category, block, activeStage!);
+    const nextVersion = nextVersionKey(currentVersions.length);
+    addVersion(category, block, activeStage!, nextVersion, '');
+    selectVersion(category, block, activeStage!, nextVersion);
     setCompareVersions(null);
 
     generateStreaming(
-      resolved,
-      (_token, fullContent) => {
-        updateVersionContent(category, block, activeStage, nextVersion, fullContent);
-      },
-      (content) => {
-        updateVersionContent(category, block, activeStage, nextVersion, content);
-      },
+      prep.resolved,
+      (_token, fullContent) => updateVersionContent(category, block, activeStage!, nextVersion, fullContent),
+      (content) => updateVersionContent(category, block, activeStage!, nextVersion, content),
       (error) => {
-        alert(`Generation failed: ${error}`);
-        updateVersionContent(category, block, activeStage, nextVersion, `[Generation Error: ${error}]`);
+        toast.error(`Generation failed: ${error}`);
+        updateVersionContent(category, block, activeStage!, nextVersion, `[Generation Error: ${error}]`);
       }
     );
-  }, [activeStage, selection, category, block, getStage, getActiveConfig, setShowSettings, generateStreaming, addVersion, selectVersion, updateVersionContent, listVersions]);
+  }, [prepareGeneration, category, block, activeStage, generateStreaming, addVersion, selectVersion, updateVersionContent, listVersions]);
 
   const handleRegenerate = useCallback(() => {
-    if (!activeStage || !selection) return;
+    const prep = prepareGeneration();
+    if (!prep || !prep.stage.selected) return;
 
-    const freshBlocks = useProjectStore.getState().project.blocks;
-    const stage = getStage(category, block, activeStage);
-    if (!stage?.selected) return;
-
-    const activeConfig = getActiveConfig();
-    if (!activeConfig) {
-      setShowSettings(true);
-      return;
-    }
-
-    const { resolved, errors } = resolveReferences(stage.input, freshBlocks);
-
-    if (errors.length > 0) {
-      alert(`Cannot generate: Missing references:\n${errors.join('\n')}`);
-      return;
-    }
-
-    const currentVersion = stage.selected;
-
+    const version = prep.stage.selected;
     generateStreaming(
-      resolved,
-      (_token, fullContent) => {
-        updateVersionContent(category, block, activeStage, currentVersion, fullContent);
-      },
-      (content) => {
-        updateVersionContent(category, block, activeStage, currentVersion, content);
-      },
-      (error) => {
-        alert(`Generation failed: ${error}`);
-      }
+      prep.resolved,
+      (_token, fullContent) => updateVersionContent(category, block, activeStage!, version, fullContent),
+      (content) => updateVersionContent(category, block, activeStage!, version, content),
+      (error) => toast.error(`Generation failed: ${error}`)
     );
-  }, [activeStage, selection, category, block, getStage, getActiveConfig, setShowSettings, generateStreaming, updateVersionContent]);
+  }, [prepareGeneration, category, block, activeStage, generateStreaming, updateVersionContent]);
 
   const handleContinue = useCallback(() => {
-    if (!activeStage || !selection) return;
+    const prep = prepareGeneration();
+    if (!prep || !prep.stage.selected) return;
 
-    const freshBlocks = useProjectStore.getState().project.blocks;
-    const stage = getStage(category, block, activeStage);
-    if (!stage?.selected) return;
-
-    const activeConfig = getActiveConfig();
-    if (!activeConfig) {
-      setShowSettings(true);
-      return;
-    }
-
-    const { resolved, errors } = resolveReferences(stage.input, freshBlocks);
-
-    if (errors.length > 0) {
-      alert(`Cannot generate: Missing references:\n${errors.join('\n')}`);
-      return;
-    }
-
-    const currentVersion = stage.selected;
-    const existingContent = stage.output[currentVersion] ?? '';
-
+    const version = prep.stage.selected;
+    const existingContent = prep.stage.output[version] ?? '';
     generateStreaming(
-      resolved + existingContent,
-      (_token, newContent) => {
-        updateVersionContent(category, block, activeStage, currentVersion, existingContent + newContent);
-      },
-      (content) => {
-        updateVersionContent(category, block, activeStage, currentVersion, existingContent + content);
-      },
-      (error) => {
-        alert(`Generation failed: ${error}`);
-      }
+      prep.resolved + existingContent,
+      (_token, newContent) => updateVersionContent(category, block, activeStage!, version, existingContent + newContent),
+      (content) => updateVersionContent(category, block, activeStage!, version, existingContent + content),
+      (error) => toast.error(`Generation failed: ${error}`)
     );
-  }, [activeStage, selection, category, block, getStage, getActiveConfig, setShowSettings, generateStreaming, updateVersionContent]);
-
-  const handleStopGeneration = useCallback(() => {
-    stopGeneration();
-  }, [stopGeneration]);
+  }, [prepareGeneration, category, block, activeStage, generateStreaming, updateVersionContent]);
 
   const isGenerating = generationState.status === 'generating';
 
@@ -283,7 +214,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
 
   const handleAddVersion = useCallback(() => {
     if (!activeStage) return;
-    const nextVersion = `v${versions.length + 1}`;
+    const nextVersion = nextVersionKey(versions.length);
     addVersion(category, block, activeStage, nextVersion, '');
     selectVersion(category, block, activeStage, nextVersion);
     setCompareVersions(null);
@@ -362,7 +293,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
       {currentStage ? (
         <div ref={containerRef} className="flex-1 flex flex-col overflow-hidden">
           {/* Input section - resizable */}
-          <div className="flex flex-col shrink-0" style={{ height: inputHeight }}>
+          <div className="flex flex-col shrink-0" style={{ height: inputResize.size }}>
             <div className="flex-1 flex flex-col p-3 overflow-hidden">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -424,7 +355,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
                 </Hint>
                 <Hint hint="editor-stop" position="top">
                   <button
-                    onClick={handleStopGeneration}
+                    onClick={stopGeneration}
                     disabled={!isGenerating}
                     className={`btn flex items-center gap-2 ${
                       isGenerating ? 'btn-secondary text-sf-warning' : 'btn-secondary disabled:opacity-50 disabled:cursor-not-allowed'
@@ -460,9 +391,9 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
 
           {/* Resize handle */}
           <div
-            onMouseDown={handleMouseDown}
+            onMouseDown={inputResize.startResize}
             className={`h-2 flex items-center justify-center cursor-row-resize border-y border-sf-bg-600 hover:bg-sf-bg-600 transition-colors ${
-              isResizing ? 'bg-sf-accent-500/20' : 'bg-sf-bg-700'
+              inputResize.isResizing ? 'bg-sf-accent-500/20' : 'bg-sf-bg-700'
             }`}
           >
             <GripHorizontal size={14} className="text-sf-text-400" />
@@ -488,7 +419,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
           <div className="text-center">
             <p>No stages in this block</p>
             <button
-              onClick={() => addStage(category, block, 'main')}
+              onClick={() => addStage(category, block, DEFAULT_STAGE_NAME)}
               className="text-sf-accent-500 hover:underline mt-2"
             >
               Add a stage

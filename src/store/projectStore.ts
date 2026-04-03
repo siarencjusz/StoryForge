@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { immer } from 'zustand/middleware/immer';
 import type { Project, Block, Stage, Selection } from '../types';
 import { isValidName } from '../utils/nameValidation';
 import { propagateBlockRename, propagateCategoryRename, transformAllInputs } from '../utils/referenceUtils';
@@ -28,6 +29,21 @@ function createEmptyStage(input: string = ''): Stage {
     selected: '',
     output: {},
   };
+}
+
+/** Reorder keys of an object by moving one index to another. Returns a new plain object. */
+function reorderKeys<T extends Record<string, unknown>>(obj: T, fromIndex: number, toIndex: number): T {
+  const keys = Object.keys(obj);
+  if (fromIndex < 0 || fromIndex >= keys.length || toIndex < 0 || toIndex >= keys.length) {
+    return obj;
+  }
+  const [movedKey] = keys.splice(fromIndex, 1);
+  keys.splice(toIndex, 0, movedKey);
+  const reordered = {} as T;
+  for (const key of keys) {
+    (reordered as Record<string, unknown>)[key] = obj[key];
+  }
+  return reordered;
 }
 
 interface ProjectStore {
@@ -94,7 +110,8 @@ interface ProjectStore {
 
 export const useProjectStore = create<ProjectStore>()(
   persist(
-    (set, get) => ({
+    immer(
+      (set, get) => ({
   // Initial state
   project: createEmptyProject(),
   filePath: null,
@@ -104,83 +121,65 @@ export const useProjectStore = create<ProjectStore>()(
 
   // Project lifecycle
   newProject: (title, author = '') => {
-    set({
-      project: createEmptyProject(title, author),
-      filePath: null,
-      isDirty: false,
-      selection: null,
-      secondarySelection: null,
+    set((state) => {
+      state.project = createEmptyProject(title, author);
+      state.filePath = null;
+      state.isDirty = false;
+      state.selection = null;
+      state.secondarySelection = null;
     });
   },
 
   loadProject: (project, filePath) => {
-    set({
-      project,
-      filePath: filePath ?? null,
-      isDirty: false,
-      selection: null,
-      secondarySelection: null,
+    set((state) => {
+      state.project = project;
+      state.filePath = filePath ?? null;
+      state.isDirty = false;
+      state.selection = null;
+      state.secondarySelection = null;
     });
   },
 
-  setDirty: (dirty) => set({ isDirty: dirty }),
-  setFilePath: (path) => set({ filePath: path }),
+  setDirty: (dirty) => set((state) => { state.isDirty = dirty; }),
+  setFilePath: (path) => set((state) => { state.filePath = path; }),
 
   // Selection
   setSelection: (selection) => {
-    set((state) => ({
-      selection,
-      project: {
-        ...state.project,
-        tree: {
-          ...state.project.tree,
-          selected: selection ? `${selection.category}:${selection.block}` : '',
-        },
-      },
-    }));
+    set((state) => {
+      state.selection = selection;
+      state.project.tree.selected = selection ? `${selection.category}:${selection.block}` : '';
+    });
   },
 
   setSecondarySelection: (selection) => {
-    set({ secondarySelection: selection });
+    set((state) => { state.secondarySelection = selection; });
   },
 
   toggleCategory: (category) => {
     set((state) => {
       const expanded = state.project.tree.expanded_categories;
-      const isExpanded = expanded.includes(category);
-      return {
-        project: {
-          ...state.project,
-          tree: {
-            ...state.project.tree,
-            expanded_categories: isExpanded
-              ? expanded.filter((c) => c !== category)
-              : [...expanded, category],
-          },
-        },
-      };
+      const idx = expanded.indexOf(category);
+      if (idx >= 0) {
+        expanded.splice(idx, 1);
+      } else {
+        expanded.push(category);
+      }
     });
   },
 
   // Project metadata
   setTitle: (title) => {
-    set((state) => ({
-      project: {
-        ...state.project,
-        project: { ...state.project.project, title },
-      },
-      isDirty: true,
-    }));
+    set((state) => {
+      state.project.project.title = title;
+      state.isDirty = true;
+    });
   },
 
   setAuthor: (author) => {
-    set((state) => ({
-      project: {
-        ...state.project,
-        project: { ...state.project.project, author },
-      },
-      isDirty: true,
-    }));
+    set((state) => {
+      state.project.project.author = author;
+      state.isDirty = true;
+    });
   },
 
   // Category operations
@@ -188,92 +187,58 @@ export const useProjectStore = create<ProjectStore>()(
 
   createCategory: (category) => {
     set((state) => {
-      if (!isValidName(category)) return state;
-      if (state.project.blocks[category]) return state;
-      return {
-        project: {
-          ...state.project,
-          blocks: { ...state.project.blocks, [category]: {} },
-        },
-        isDirty: true,
-      };
+      if (!isValidName(category)) return;
+      if (state.project.blocks[category]) return;
+      state.project.blocks[category] = {};
+      state.isDirty = true;
     });
   },
 
   deleteCategory: (category) => {
     set((state) => {
-      const { [category]: _, ...rest } = state.project.blocks;
-      return {
-        project: { ...state.project, blocks: rest },
-        isDirty: true,
-        selection: state.selection?.category === category ? null : state.selection,
-      };
+      delete state.project.blocks[category];
+      state.isDirty = true;
+      if (state.selection?.category === category) state.selection = null;
     });
   },
 
   renameCategory: (oldName, newName) => {
     set((state) => {
-      if (!isValidName(newName)) return state;
-      if (!state.project.blocks[oldName] || state.project.blocks[newName]) return state;
+      if (!isValidName(newName)) return;
+      if (!state.project.blocks[oldName] || state.project.blocks[newName]) return;
 
-      const { [oldName]: categoryData, ...rest } = state.project.blocks;
+      // Rename key: copy data, delete old, add new
+      const categoryData = state.project.blocks[oldName];
+      delete state.project.blocks[oldName];
+      state.project.blocks[newName] = categoryData;
 
-      // Rebuild blocks with new category key, then propagate references
-      const blocksWithNewKey = { ...rest, [newName]: categoryData };
-      const updatedBlocks = transformAllInputs(blocksWithNewKey, (input) =>
+      // Propagate references (needs plain object for regex transforms)
+      const plainBlocks = JSON.parse(JSON.stringify(state.project.blocks));
+      state.project.blocks = transformAllInputs(plainBlocks, (input) =>
         propagateCategoryRename(input, oldName, newName)
       );
 
-      // Update expanded_categories if needed
-      const expandedCategories = state.project.tree.expanded_categories.map((c) =>
-        c === oldName ? newName : c
-      );
-      return {
-        project: {
-          ...state.project,
-          blocks: updatedBlocks,
-          tree: {
-            ...state.project.tree,
-            expanded_categories: expandedCategories,
-            selected: state.project.tree.selected.startsWith(`${oldName}:`)
-              ? state.project.tree.selected.replace(`${oldName}:`, `${newName}:`)
-              : state.project.tree.selected,
-          },
-        },
-        isDirty: true,
-        selection:
-          state.selection?.category === oldName
-            ? { ...state.selection, category: newName }
-            : state.selection,
-      };
+      // Update expanded categories
+      const expanded = state.project.tree.expanded_categories;
+      const idx = expanded.indexOf(oldName);
+      if (idx >= 0) expanded[idx] = newName;
+
+      // Update tree selection string
+      if (state.project.tree.selected.startsWith(`${oldName}:`)) {
+        state.project.tree.selected = state.project.tree.selected.replace(`${oldName}:`, `${newName}:`);
+      }
+
+      state.isDirty = true;
+      if (state.selection?.category === oldName) {
+        state.selection = { ...state.selection, category: newName };
+      }
     });
   },
 
   reorderCategories: (fromIndex, toIndex) => {
     set((state) => {
-      const categories = Object.keys(state.project.blocks);
-      if (fromIndex < 0 || fromIndex >= categories.length || toIndex < 0 || toIndex >= categories.length) {
-        return state;
-      }
-
-      // Remove the category from its current position
-      const [movedCategory] = categories.splice(fromIndex, 1);
-      // Insert it at the new position
-      categories.splice(toIndex, 0, movedCategory);
-
-      // Rebuild the blocks object with new order
-      const reorderedBlocks: typeof state.project.blocks = {};
-      for (const cat of categories) {
-        reorderedBlocks[cat] = state.project.blocks[cat];
-      }
-
-      return {
-        project: {
-          ...state.project,
-          blocks: reorderedBlocks,
-        },
-        isDirty: true,
-      };
+      state.project.blocks = reorderKeys(state.project.blocks, fromIndex, toIndex);
+      state.isDirty = true;
     });
   },
 
@@ -289,72 +254,47 @@ export const useProjectStore = create<ProjectStore>()(
 
   createBlock: (category, name) => {
     set((state) => {
-      if (!isValidName(name)) return state;
-      const categoryBlocks = state.project.blocks[category] ?? {};
-      if (categoryBlocks[name]) return state; // Block exists
-
-      return {
-        project: {
-          ...state.project,
-          blocks: {
-            ...state.project.blocks,
-            [category]: { ...categoryBlocks, [name]: {} },
-          },
-        },
-        isDirty: true,
-      };
+      if (!isValidName(name)) return;
+      const categoryBlocks = state.project.blocks[category];
+      if (!categoryBlocks || categoryBlocks[name]) return;
+      categoryBlocks[name] = {};
+      state.isDirty = true;
     });
   },
 
   deleteBlock: (category, name) => {
     set((state) => {
       const categoryBlocks = state.project.blocks[category];
-      if (!categoryBlocks?.[name]) return state;
-
-      const { [name]: _, ...rest } = categoryBlocks;
-      return {
-        project: {
-          ...state.project,
-          blocks: { ...state.project.blocks, [category]: rest },
-        },
-        isDirty: true,
-        selection:
-          state.selection?.category === category && state.selection?.block === name
-            ? null
-            : state.selection,
-      };
+      if (!categoryBlocks?.[name]) return;
+      delete categoryBlocks[name];
+      state.isDirty = true;
+      if (state.selection?.category === category && state.selection?.block === name) {
+        state.selection = null;
+      }
     });
   },
 
   renameBlock: (category, oldName, newName) => {
     set((state) => {
-      if (!isValidName(newName)) return state;
+      if (!isValidName(newName)) return;
       const categoryBlocks = state.project.blocks[category];
-      if (!categoryBlocks?.[oldName] || categoryBlocks[newName]) return state;
+      if (!categoryBlocks?.[oldName] || categoryBlocks[newName]) return;
 
-      // Rename the key within the category
-      const { [oldName]: block, ...rest } = categoryBlocks;
-      const blocksWithNewKey = {
-        ...state.project.blocks,
-        [category]: { ...rest, [newName]: block },
-      };
+      // Rename key within category
+      const blockData = categoryBlocks[oldName];
+      delete categoryBlocks[oldName];
+      categoryBlocks[newName] = blockData;
 
-      // Propagate reference updates across all stage inputs
-      const updatedBlocks = transformAllInputs(blocksWithNewKey, (input) =>
+      // Propagate references (needs plain object for regex transforms)
+      const plainBlocks = JSON.parse(JSON.stringify(state.project.blocks));
+      state.project.blocks = transformAllInputs(plainBlocks, (input) =>
         propagateBlockRename(input, category, oldName, newName)
       );
 
-      return {
-        project: {
-          ...state.project,
-          blocks: updatedBlocks,
-        },
-        isDirty: true,
-        selection:
-          state.selection?.category === category && state.selection?.block === oldName
-            ? { ...state.selection, block: newName }
-            : state.selection,
-      };
+      state.isDirty = true;
+      if (state.selection?.category === category && state.selection?.block === oldName) {
+        state.selection = { ...state.selection, block: newName };
+      }
     });
   },
 
@@ -362,9 +302,8 @@ export const useProjectStore = create<ProjectStore>()(
     set((state) => {
       const categoryBlocks = state.project.blocks[category];
       const blockData = categoryBlocks?.[name];
-      if (!blockData) return state;
+      if (!blockData) return;
 
-      // Find a unique valid name: "name_copy", "name_copy_2", etc.
       let newName = `${name}_copy`;
       let counter = 2;
       while (categoryBlocks[newName]) {
@@ -372,53 +311,17 @@ export const useProjectStore = create<ProjectStore>()(
         counter++;
       }
 
-      // Deep clone the block data
-      const clonedBlock = JSON.parse(JSON.stringify(blockData));
-
-      return {
-        project: {
-          ...state.project,
-          blocks: {
-            ...state.project.blocks,
-            [category]: { ...categoryBlocks, [newName]: clonedBlock },
-          },
-        },
-        isDirty: true,
-      };
+      categoryBlocks[newName] = JSON.parse(JSON.stringify(blockData));
+      state.isDirty = true;
     });
   },
 
   reorderBlocks: (category, fromIndex, toIndex) => {
     set((state) => {
       const categoryBlocks = state.project.blocks[category];
-      if (!categoryBlocks) return state;
-
-      const blockNames = Object.keys(categoryBlocks);
-      if (fromIndex < 0 || fromIndex >= blockNames.length || toIndex < 0 || toIndex >= blockNames.length) {
-        return state;
-      }
-
-      // Remove the block from its current position
-      const [movedBlock] = blockNames.splice(fromIndex, 1);
-      // Insert it at the new position
-      blockNames.splice(toIndex, 0, movedBlock);
-
-      // Rebuild the category blocks object with new order
-      const reorderedBlocks: typeof categoryBlocks = {};
-      for (const blockName of blockNames) {
-        reorderedBlocks[blockName] = categoryBlocks[blockName];
-      }
-
-      return {
-        project: {
-          ...state.project,
-          blocks: {
-            ...state.project.blocks,
-            [category]: reorderedBlocks,
-          },
-        },
-        isDirty: true,
-      };
+      if (!categoryBlocks) return;
+      state.project.blocks[category] = reorderKeys(categoryBlocks, fromIndex, toIndex);
+      state.isDirty = true;
     });
   },
 
@@ -434,140 +337,54 @@ export const useProjectStore = create<ProjectStore>()(
 
   addStage: (category, block, stage, input = '') => {
     set((state) => {
-      if (!isValidName(stage)) return state;
+      if (!isValidName(stage)) return;
       const blockData = state.project.blocks[category]?.[block];
-      if (!blockData || blockData[stage]) return state;
-
-      return {
-        project: {
-          ...state.project,
-          blocks: {
-            ...state.project.blocks,
-            [category]: {
-              ...state.project.blocks[category],
-              [block]: {
-                ...blockData,
-                [stage]: createEmptyStage(input),
-              },
-            },
-          },
-        },
-        isDirty: true,
-      };
+      if (!blockData || blockData[stage]) return;
+      blockData[stage] = createEmptyStage(input);
+      state.isDirty = true;
     });
   },
 
   updateStageInput: (category, block, stage, input) => {
     set((state) => {
       const stageData = state.project.blocks[category]?.[block]?.[stage];
-      if (!stageData) return state;
-
-      return {
-        project: {
-          ...state.project,
-          blocks: {
-            ...state.project.blocks,
-            [category]: {
-              ...state.project.blocks[category],
-              [block]: {
-                ...state.project.blocks[category][block],
-                [stage]: { ...stageData, input },
-              },
-            },
-          },
-        },
-        isDirty: true,
-      };
+      if (!stageData) return;
+      stageData.input = input;
+      state.isDirty = true;
     });
   },
 
   deleteStage: (category, block, stage) => {
     set((state) => {
       const blockData = state.project.blocks[category]?.[block];
-      if (!blockData?.[stage]) return state;
-
-      const { [stage]: _, ...rest } = blockData;
-      return {
-        project: {
-          ...state.project,
-          blocks: {
-            ...state.project.blocks,
-            [category]: {
-              ...state.project.blocks[category],
-              [block]: rest,
-            },
-          },
-        },
-        isDirty: true,
-      };
+      if (!blockData?.[stage]) return;
+      delete blockData[stage];
+      state.isDirty = true;
     });
   },
 
   renameStage: (category, block, oldName, newName) => {
     set((state) => {
-      if (!isValidName(newName)) return state;
+      if (!isValidName(newName)) return;
       const blockData = state.project.blocks[category]?.[block];
-      if (!blockData?.[oldName] || blockData[newName]) return state;
+      if (!blockData?.[oldName] || blockData[newName]) return;
 
-      // Preserve order by rebuilding the object with the new key in the same position
-      const newBlockData: typeof blockData = {};
+      // Rebuild to preserve key order
+      const newBlockData: Block = {};
       for (const key of Object.keys(blockData)) {
-        if (key === oldName) {
-          newBlockData[newName] = blockData[oldName];
-        } else {
-          newBlockData[key] = blockData[key];
-        }
+        newBlockData[key === oldName ? newName : key] = blockData[key];
       }
-
-      return {
-        project: {
-          ...state.project,
-          blocks: {
-            ...state.project.blocks,
-            [category]: {
-              ...state.project.blocks[category],
-              [block]: newBlockData,
-            },
-          },
-        },
-        isDirty: true,
-      };
+      state.project.blocks[category][block] = newBlockData;
+      state.isDirty = true;
     });
   },
 
   reorderStages: (category, block, fromIndex, toIndex) => {
     set((state) => {
       const blockData = state.project.blocks[category]?.[block];
-      if (!blockData) return state;
-
-      const stageKeys = Object.keys(blockData);
-      if (fromIndex < 0 || fromIndex >= stageKeys.length || toIndex < 0 || toIndex >= stageKeys.length) {
-        return state;
-      }
-
-      // Reorder keys
-      const [movedKey] = stageKeys.splice(fromIndex, 1);
-      stageKeys.splice(toIndex, 0, movedKey);
-
-      // Rebuild object in new order
-      const newBlockData: typeof blockData = {};
-      for (const key of stageKeys) {
-        newBlockData[key] = blockData[key];
-      }
-
-      return {
-        project: {
-          ...state.project,
-          blocks: {
-            ...state.project.blocks,
-            [category]: {
-              ...state.project.blocks[category],
-              [block]: newBlockData,
-            },
-          },
-        },
-        isDirty: true,
-      };
+      if (!blockData) return;
+      state.project.blocks[category][block] = reorderKeys(blockData, fromIndex, toIndex);
+      state.isDirty = true;
     });
   },
 
@@ -580,152 +397,59 @@ export const useProjectStore = create<ProjectStore>()(
   addVersion: (category, block, stage, version, content) => {
     set((state) => {
       const stageData = state.project.blocks[category]?.[block]?.[stage];
-      if (!stageData) return state;
+      if (!stageData) return;
+      stageData.output[version] = content;
+      state.isDirty = true;
+    });
+  },
 
-      return {
-        project: {
-          ...state.project,
-          blocks: {
-            ...state.project.blocks,
-            [category]: {
-              ...state.project.blocks[category],
-              [block]: {
-                ...state.project.blocks[category][block],
-                [stage]: {
-                  ...stageData,
-                  output: { ...stageData.output, [version]: content },
-                },
-              },
-            },
-          },
-        },
-        isDirty: true,
-      };
+  updateVersionContent: (category, block, stage, version, content) => {
+    set((state) => {
+      const stageData = state.project.blocks[category]?.[block]?.[stage];
+      if (!stageData || stageData.output[version] === undefined) return;
+      stageData.output[version] = content;
+      state.isDirty = true;
     });
   },
 
   selectVersion: (category, block, stage, version) => {
     set((state) => {
       const stageData = state.project.blocks[category]?.[block]?.[stage];
-      if (!stageData || stageData.output[version] === undefined) return state;
-
-      return {
-        project: {
-          ...state.project,
-          blocks: {
-            ...state.project.blocks,
-            [category]: {
-              ...state.project.blocks[category],
-              [block]: {
-                ...state.project.blocks[category][block],
-                [stage]: { ...stageData, selected: version },
-              },
-            },
-          },
-        },
-        isDirty: true,
-      };
+      if (!stageData || stageData.output[version] === undefined) return;
+      stageData.selected = version;
+      state.isDirty = true;
     });
   },
 
   deleteVersion: (category, block, stage, version) => {
     set((state) => {
       const stageData = state.project.blocks[category]?.[block]?.[stage];
-      if (!stageData?.output[version]) return state;
-
-      const { [version]: _, ...rest } = stageData.output;
-      const newSelected = stageData.selected === version ? '' : stageData.selected;
-
-      return {
-        project: {
-          ...state.project,
-          blocks: {
-            ...state.project.blocks,
-            [category]: {
-              ...state.project.blocks[category],
-              [block]: {
-                ...state.project.blocks[category][block],
-                [stage]: { ...stageData, output: rest, selected: newSelected },
-              },
-            },
-          },
-        },
-        isDirty: true,
-      };
+      if (!stageData?.output[version]) return;
+      delete stageData.output[version];
+      if (stageData.selected === version) stageData.selected = '';
+      state.isDirty = true;
     });
   },
 
   renameVersion: (category, block, stage, oldName, newName) => {
     set((state) => {
       const stageData = state.project.blocks[category]?.[block]?.[stage];
-      if (!stageData?.output[oldName] || stageData.output[newName] !== undefined) return state;
+      if (!stageData?.output[oldName] || stageData.output[newName] !== undefined) return;
 
-      const { [oldName]: content, ...rest } = stageData.output;
-      const newSelected = stageData.selected === oldName ? newName : stageData.selected;
-
-      return {
-        project: {
-          ...state.project,
-          blocks: {
-            ...state.project.blocks,
-            [category]: {
-              ...state.project.blocks[category],
-              [block]: {
-                ...state.project.blocks[category][block],
-                [stage]: {
-                  ...stageData,
-                  output: { ...rest, [newName]: content },
-                  selected: newSelected,
-                },
-              },
-            },
-          },
-        },
-        isDirty: true,
-      };
+      const content = stageData.output[oldName];
+      delete stageData.output[oldName];
+      stageData.output[newName] = content;
+      if (stageData.selected === oldName) stageData.selected = newName;
+      state.isDirty = true;
     });
   },
 
   reorderVersions: (category, block, stage, fromIndex, toIndex) => {
     set((state) => {
       const stageData = state.project.blocks[category]?.[block]?.[stage];
-      if (!stageData) return state;
-
-      const versionKeys = Object.keys(stageData.output);
-      if (fromIndex < 0 || fromIndex >= versionKeys.length || toIndex < 0 || toIndex >= versionKeys.length) {
-        return state;
-      }
-
-      // Remove the version from its current position
-      const [movedVersion] = versionKeys.splice(fromIndex, 1);
-      // Insert it at the new position
-      versionKeys.splice(toIndex, 0, movedVersion);
-
-      // Rebuild the output object with new order
-      const reorderedOutput: typeof stageData.output = {};
-      for (const key of versionKeys) {
-        reorderedOutput[key] = stageData.output[key];
-      }
-
-      return {
-        project: {
-          ...state.project,
-          blocks: {
-            ...state.project.blocks,
-            [category]: {
-              ...state.project.blocks[category],
-              [block]: {
-                ...state.project.blocks[category][block],
-                [stage]: {
-                  ...stageData,
-                  output: reorderedOutput,
-                },
-              },
-            },
-          },
-        },
-        isDirty: true,
-      };
+      if (!stageData) return;
+      stageData.output = reorderKeys(stageData.output, fromIndex, toIndex);
+      state.isDirty = true;
     });
   },
 
@@ -735,46 +459,11 @@ export const useProjectStore = create<ProjectStore>()(
     return stageData.output[stageData.selected];
   },
 
-  updateVersionContent: (category, block, stage, version, content) => {
-    set((state) => {
-      const stageData = state.project.blocks[category]?.[block]?.[stage];
-      if (!stageData || stageData.output[version] === undefined) return state;
-
-      return {
-        project: {
-          ...state.project,
-          blocks: {
-            ...state.project.blocks,
-            [category]: {
-              ...state.project.blocks[category],
-              [block]: {
-                ...state.project.blocks[category][block],
-                [stage]: {
-                  ...stageData,
-                  output: { ...stageData.output, [version]: content },
-                },
-              },
-            },
-          },
-        },
-        isDirty: true,
-      };
-    });
-  },
-
   getProjectForExport: () => {
-    const state = get();
-    // Return a clean copy without UI-only state
-    return {
-      storyforge: state.project.storyforge,
-      schema_version: state.project.schema_version,
-      project: state.project.project,
-      settings: state.project.settings,
-      blocks: state.project.blocks,
-      tree: state.project.tree,
-    };
+    return get().project;
   },
-    }),
+      })
+    ),
     {
       name: 'storyforge-project',
       partialize: (state) => ({

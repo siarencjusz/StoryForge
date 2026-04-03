@@ -2,6 +2,7 @@
  * File utilities for loading and saving YAML project files
  */
 import yaml from 'js-yaml';
+import { toast } from 'sonner';
 import type { Project } from '../types';
 
 // Store the file handle for "Save" functionality
@@ -52,7 +53,7 @@ export async function openProjectFile(): Promise<{ project: Project; fileName: s
   // Try using File System Access API first
   if ('showOpenFilePicker' in window) {
     try {
-      const [handle] = await (window as any).showOpenFilePicker({
+      const [handle] = await window.showOpenFilePicker!({
         types: [{
           description: 'YAML Files',
           accept: { 'text/yaml': ['.yaml', '.yml'] },
@@ -91,7 +92,7 @@ export async function openProjectFile(): Promise<{ project: Project; fileName: s
         resolve({ project, fileName: file.name });
       } catch (error) {
         console.error('Failed to load project:', error);
-        alert('Failed to load project: ' + (error instanceof Error ? error.message : 'Unknown error'));
+        toast.error('Failed to load project: ' + (error instanceof Error ? error.message : 'Unknown error'));
         resolve(null);
       }
     };
@@ -131,7 +132,7 @@ export async function saveProjectFileAs(project: Project): Promise<string | null
   // Check if File System Access API is available
   if ('showSaveFilePicker' in window) {
     try {
-      const handle = await (window as any).showSaveFilePicker({
+      const handle = await window.showSaveFilePicker!({
         suggestedName: (project.project.title || 'project').replace(/[^a-zA-Z0-9_-]/g, '_') + '.yaml',
         types: [{
           description: 'YAML Files',

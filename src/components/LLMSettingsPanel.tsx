@@ -5,6 +5,8 @@
 import { useState, useEffect } from 'react';
 import { X, Plus, Trash2, Check, Loader2, AlertCircle, Settings2 } from 'lucide-react';
 import { useLLMStore } from '../store/llmStore';
+import { Modal } from './Modal';
+import { toast } from 'sonner';
 import type { LLMConfig } from '../types';
 
 interface LLMSettingsPanelProps {
@@ -28,8 +30,9 @@ export function LLMSettingsPanel({ onClose }: LLMSettingsPanelProps) {
 
   // Auto-ping on mount
   useEffect(() => {
-    configs.forEach((config) => {
-      pingConfig(config.id);
+    const { configs: currentConfigs, pingConfig: ping } = useLLMStore.getState();
+    currentConfigs.forEach((config) => {
+      ping(config.id);
     });
   }, []);
 
@@ -65,7 +68,7 @@ export function LLMSettingsPanel({ onClose }: LLMSettingsPanelProps) {
 
   const handleDeleteConfig = (id: string) => {
     if (configs.length <= 1) {
-      alert('Cannot delete the last configuration');
+      toast.error('Cannot delete the last configuration');
       return;
     }
     if (confirm('Delete this LLM configuration?')) {
@@ -77,10 +80,9 @@ export function LLMSettingsPanel({ onClose }: LLMSettingsPanelProps) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-sf-bg-800 rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-sf-bg-600">
+    <Modal onClose={onClose} className="w-full max-w-2xl max-h-[80vh] flex flex-col">
+      {/* Header */}
+      <div className="flex items-center justify-between p-4 border-b border-sf-bg-600">
           <div className="flex items-center gap-2">
             <Settings2 size={20} className="text-sf-accent-500" />
             <h2 className="text-lg font-semibold text-sf-text-100">LLM Settings</h2>
@@ -321,7 +323,6 @@ export function LLMSettingsPanel({ onClose }: LLMSettingsPanelProps) {
             OpenAI, Ollama, LM Studio, llama.cpp server, vLLM, and other compatible providers.
           </p>
         </div>
-      </div>
-    </div>
+      </Modal>
   );
 }

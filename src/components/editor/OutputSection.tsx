@@ -1,7 +1,8 @@
-import { useState } from 'react';
 import { Plus, Check, Trash2, X, Columns2, GripVertical } from 'lucide-react';
 import { Hint } from '../Hint';
 import { formatTokenCount } from '../../utils/tokenUtils';
+import { useDragReorder } from '../../hooks/useDragReorder';
+import { useInlineEdit } from '../../hooks/useInlineEdit';
 import type { Stage } from '../../types';
 
 interface OutputSectionProps {
@@ -31,10 +32,8 @@ export function OutputSection({
   onReorderVersions,
   onUpdateContent,
 }: OutputSectionProps) {
-  const [editingVersion, setEditingVersion] = useState<string | null>(null);
-  const [editingVersionName, setEditingVersionName] = useState('');
-  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const edit = useInlineEdit(onRenameVersion);
+  const drag = useDragReorder(onReorderVersions);
 
   const handleVersionClick = (version: string, e: React.MouseEvent) => {
     if (e.shiftKey && versions.length >= 2) {
@@ -56,14 +55,6 @@ export function OutputSection({
       onSelectVersion(version);
       onCompareVersionsChange(null);
     }
-  };
-
-  const handleRenameVersion = (oldName: string, newName: string) => {
-    if (newName.trim() && newName !== oldName) {
-      onRenameVersion(oldName, newName.trim());
-    }
-    setEditingVersion(null);
-    setEditingVersionName('');
   };
 
   const handleDeleteVersion = (version: string) => {
@@ -124,65 +115,30 @@ export function OutputSection({
       {/* Version tabs */}
       <div className="flex items-center gap-1 mb-2">
         {versions.map((version, index) =>
-          editingVersion === version ? (
+          edit.editingItem === version ? (
             <input
               key={version}
-              type="text"
-              value={editingVersionName}
-              onChange={(e) => setEditingVersionName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleRenameVersion(version, editingVersionName);
-                if (e.key === 'Escape') {
-                  setEditingVersion(null);
-                  setEditingVersionName('');
-                }
-              }}
-              onBlur={() => handleRenameVersion(version, editingVersionName)}
+              {...edit.inputProps(version)}
               className="input text-xs py-0.5 px-2 w-16"
-              autoFocus
             />
           ) : (
             <button
               key={version}
               draggable
-              onDragStart={(e) => {
-                setDraggedIndex(index);
-                e.dataTransfer.effectAllowed = 'move';
-                e.dataTransfer.setData('text/plain', version);
-              }}
-              onDragEnd={() => {
-                setDraggedIndex(null);
-                setDragOverIndex(null);
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                if (draggedIndex !== null && draggedIndex !== index) {
-                  setDragOverIndex(index);
-                }
-              }}
-              onDragLeave={() => setDragOverIndex(null)}
-              onDrop={(e) => {
-                e.preventDefault();
-                if (draggedIndex !== null && draggedIndex !== index) {
-                  onReorderVersions(draggedIndex, index);
-                }
-                setDraggedIndex(null);
-                setDragOverIndex(null);
-              }}
+              onDragStart={(e) => drag.handleDragStart(e, index)}
+              onDragEnd={drag.handleDragEnd}
+              onDragOver={(e) => drag.handleDragOver(e, index)}
+              onDragLeave={drag.handleDragLeave}
+              onDrop={(e) => drag.handleDrop(e, index)}
               onClick={(e) => handleVersionClick(version, e)}
-              onDoubleClick={() => {
-                setEditingVersion(version);
-                setEditingVersionName(version);
-              }}
+              onDoubleClick={() => edit.startEditing(version)}
               className={`group px-2 py-0.5 text-xs rounded flex items-center gap-1 ${
                 isInComparison(version)
                   ? 'bg-sf-accent-500 text-white ring-2 ring-sf-accent-300'
                   : currentStage.selected === version
                     ? 'bg-sf-accent-600 text-white'
                     : 'bg-sf-bg-700 text-sf-text-300 hover:bg-sf-bg-600'
-              } ${draggedIndex === index ? 'opacity-50' : ''} ${
-                dragOverIndex === index ? 'ring-2 ring-sf-accent-500' : ''
-              }`}
+              } ${drag.dragClasses(index)}`}
             >
               <GripVertical size={10} className="opacity-0 group-hover:opacity-100 cursor-grab shrink-0" />
               {version}
@@ -262,4 +218,3 @@ export function OutputSection({
     </div>
   );
 }
-

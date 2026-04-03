@@ -1,7 +1,8 @@
 import { ChevronRight, ChevronDown, Folder, FileText, Plus, PanelRight, Copy, X, GripVertical, Search } from 'lucide-react';
 import { useProjectStore } from '../store/projectStore';
-import { useState, useMemo, type DragEvent } from 'react';
+import { useState, useMemo } from 'react';
 import { validateName } from '../utils/nameValidation';
+import { useInlineEdit } from '../hooks/useInlineEdit';
 
 export function TreePanel() {
   const {
@@ -28,16 +29,24 @@ export function TreePanel() {
   const [showNewCategory, setShowNewCategory] = useState(false);
   const [newBlockCategory, setNewBlockCategory] = useState<string | null>(null);
   const [newBlockName, setNewBlockName] = useState('');
-  const [editingCategory, setEditingCategory] = useState<string | null>(null);
-  const [editingCategoryName, setEditingCategoryName] = useState('');
-  const [editingBlock, setEditingBlock] = useState<{ category: string; block: string } | null>(null);
-  const [editingBlockName, setEditingBlockName] = useState('');
   const [nameError, setNameError] = useState<string | null>(null);
 
-  // Drag and drop state
+  // Inline edit hooks for categories and blocks
+  const [editingBlockCategory, setEditingBlockCategory] = useState<string | null>(null);
+  const catEdit = useInlineEdit(renameCategory);
+  const blockEdit = useInlineEdit((oldName: string, newName: string) => {
+    // We need the category context — stored in editingBlockCategory
+    if (editingBlockCategory) {
+      renameBlock(editingBlockCategory, oldName, newName);
+    }
+  });
+
+  // Drag and drop state for categories
   const [draggedCategory, setDraggedCategory] = useState<string | null>(null);
-  const [draggedBlock, setDraggedBlock] = useState<{ category: string; block: string } | null>(null);
   const [dropTargetCategory, setDropTargetCategory] = useState<string | null>(null);
+
+  // Drag and drop state for blocks
+  const [draggedBlock, setDraggedBlock] = useState<{ category: string; block: string } | null>(null);
   const [dropTargetBlock, setDropTargetBlock] = useState<{ category: string; block: string } | null>(null);
 
   // Search / filter state
@@ -49,7 +58,7 @@ export function TreePanel() {
   // Filter categories and blocks by search query
   const filteredTree = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    if (!query) return null; // null = no filter, show everything
+    if (!query) return null;
 
     const result: Record<string, string[]> = {};
     for (const cat of categories) {
@@ -114,7 +123,6 @@ export function TreePanel() {
   };
 
   const handleStartAddBlock = (category: string) => {
-    // Expand category if not already expanded
     if (!expandedCategories.includes(category)) {
       toggleCategory(category);
     }
@@ -122,44 +130,11 @@ export function TreePanel() {
     setNewBlockName('');
   };
 
-  const handleRenameCategory = (oldName: string, newName: string) => {
-    const trimmed = newName.trim();
-    if (trimmed && trimmed !== oldName) {
-      const result = validateName(trimmed);
-      if (!result.valid) {
-        setNameError(result.error ?? 'Invalid name');
-        return;
-      }
-      renameCategory(oldName, trimmed);
-      setNameError(null);
-    }
-    setEditingCategory(null);
-    setEditingCategoryName('');
-  };
-
-  const handleRenameBlock = (category: string, oldName: string, newName: string) => {
-    const trimmed = newName.trim();
-    if (trimmed && trimmed !== oldName) {
-      const result = validateName(trimmed);
-      if (!result.valid) {
-        setNameError(result.error ?? 'Invalid name');
-        return;
-      }
-      renameBlock(category, oldName, trimmed);
-      setNameError(null);
-    }
-    setEditingBlock(null);
-    setEditingBlockName('');
-  };
-
   const handleBlockClick = (category: string, block: string, e: React.MouseEvent) => {
     if (e.shiftKey) {
-      // Shift+Click: open in secondary panel
       setSecondarySelection({ category, block });
     } else {
-      // Normal click: select block, close secondary if same block
       setSelection({ category, block });
-      // If clicking the same block that's in secondary, close secondary
       if (secondarySelection?.category === category && secondarySelection?.block === block) {
         setSecondarySelection(null);
       }
@@ -173,13 +148,13 @@ export function TreePanel() {
     secondarySelection?.category === category && secondarySelection?.block === block;
 
   // Category drag handlers
-  const handleCategoryDragStart = (e: DragEvent, category: string) => {
+  const handleCategoryDragStart = (e: React.DragEvent, category: string) => {
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', category);
     setDraggedCategory(category);
   };
 
-  const handleCategoryDragOver = (e: DragEvent, category: string) => {
+  const handleCategoryDragOver = (e: React.DragEvent, category: string) => {
     if (!draggedCategory || draggedCategory === category) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
@@ -190,7 +165,7 @@ export function TreePanel() {
     setDropTargetCategory(null);
   };
 
-  const handleCategoryDrop = (e: DragEvent, targetCategory: string) => {
+  const handleCategoryDrop = (e: React.DragEvent, targetCategory: string) => {
     e.preventDefault();
     if (!draggedCategory || draggedCategory === targetCategory) return;
 
@@ -211,16 +186,15 @@ export function TreePanel() {
   };
 
   // Block drag handlers
-  const handleBlockDragStart = (e: DragEvent, category: string, block: string) => {
-    e.stopPropagation(); // Prevent category drag
+  const handleBlockDragStart = (e: React.DragEvent, category: string, block: string) => {
+    e.stopPropagation();
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', `${category}:${block}`);
     setDraggedBlock({ category, block });
   };
 
-  const handleBlockDragOver = (e: DragEvent, category: string, block: string) => {
+  const handleBlockDragOver = (e: React.DragEvent, category: string, block: string) => {
     if (!draggedBlock || (draggedBlock.category === category && draggedBlock.block === block)) return;
-    // Only allow reordering within the same category
     if (draggedBlock.category !== category) return;
 
     e.preventDefault();
@@ -233,7 +207,7 @@ export function TreePanel() {
     setDropTargetBlock(null);
   };
 
-  const handleBlockDrop = (e: DragEvent, targetCategory: string, targetBlock: string) => {
+  const handleBlockDrop = (e: React.DragEvent, targetCategory: string, targetBlock: string) => {
     e.preventDefault();
     e.stopPropagation();
     if (!draggedBlock || draggedBlock.category !== targetCategory) return;
@@ -307,25 +281,14 @@ export function TreePanel() {
           return (
             <div key={category} className="mb-1">
               {/* Category header */}
-              {editingCategory === category ? (
+              {catEdit.editingItem === category ? (
                 <div className="tree-item">
                   <ChevronRight size={16} className="text-sf-text-400 shrink-0" />
                   <Folder size={16} className="text-sf-accent-500 shrink-0" />
                   <input
-                    type="text"
-                    value={editingCategoryName}
-                    onChange={(e) => setEditingCategoryName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleRenameCategory(category, editingCategoryName);
-                      if (e.key === 'Escape') {
-                        setEditingCategory(null);
-                        setEditingCategoryName('');
-                      }
-                    }}
-                    onBlur={() => handleRenameCategory(category, editingCategoryName)}
+                    {...catEdit.inputProps(category)}
                     onClick={(e) => e.stopPropagation()}
                     className="input flex-1 text-sm py-0.5"
-                    autoFocus
                   />
                 </div>
               ) : (
@@ -334,8 +297,7 @@ export function TreePanel() {
                   onClick={() => toggleCategory(category)}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
-                    setEditingCategory(category);
-                    setEditingCategoryName(category);
+                    catEdit.startEditing(category);
                   }}
                   draggable
                   onDragStart={(e) => handleCategoryDragStart(e, category)}
@@ -411,26 +373,15 @@ export function TreePanel() {
                     const isSelected = isBlockSelected(category, block);
                     const isSecondary = isBlockSecondary(category, block);
                     const isEditing =
-                      editingBlock?.category === category && editingBlock?.block === block;
+                      blockEdit.editingItem === block && editingBlockCategory === category;
 
                     return isEditing ? (
                       <div key={block} className="tree-item ml-2">
                         <FileText size={16} className="text-sf-text-400 shrink-0" />
                         <input
-                          type="text"
-                          value={editingBlockName}
-                          onChange={(e) => setEditingBlockName(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleRenameBlock(category, block, editingBlockName);
-                            if (e.key === 'Escape') {
-                              setEditingBlock(null);
-                              setEditingBlockName('');
-                            }
-                          }}
-                          onBlur={() => handleRenameBlock(category, block, editingBlockName)}
+                          {...blockEdit.inputProps(block)}
                           onClick={(e) => e.stopPropagation()}
                           className="input flex-1 text-sm py-0.5"
-                          autoFocus
                         />
                       </div>
                     ) : (
@@ -440,8 +391,8 @@ export function TreePanel() {
                         onClick={(e) => handleBlockClick(category, block, e)}
                         onDoubleClick={(e) => {
                           e.stopPropagation();
-                          setEditingBlock({ category, block });
-                          setEditingBlockName(block);
+                          setEditingBlockCategory(category);
+                          blockEdit.startEditing(block);
                         }}
                         draggable
                         onDragStart={(e) => handleBlockDragStart(e, category, block)}

@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { Plus, GripVertical } from 'lucide-react';
 import { Hint } from '../Hint';
 import { validateName } from '../../utils/nameValidation';
+import { useDragReorder } from '../../hooks/useDragReorder';
+import { useInlineEdit } from '../../hooks/useInlineEdit';
 
 interface StageTabsProps {
   stages: string[];
@@ -22,106 +24,54 @@ export function StageTabs({
 }: StageTabsProps) {
   const [newStageName, setNewStageName] = useState('');
   const [showNewStage, setShowNewStage] = useState(false);
-  const [editingStage, setEditingStage] = useState<string | null>(null);
-  const [editingStageName, setEditingStageName] = useState('');
-  const [nameError, setNameError] = useState<string | null>(null);
-  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const drag = useDragReorder(onStageReorder);
+  const edit = useInlineEdit(onStageRename);
 
   const handleCreate = () => {
     const name = newStageName.trim();
     const result = validateName(name);
     if (!result.valid) {
-      setNameError(result.error ?? 'Invalid name');
+      setCreateError(result.error ?? 'Invalid name');
       return;
     }
     onStageCreate(name);
     onStageSelect(name);
     setNewStageName('');
     setShowNewStage(false);
-    setNameError(null);
-  };
-
-  const handleRename = (oldName: string, newName: string) => {
-    const trimmed = newName.trim();
-    if (trimmed && trimmed !== oldName) {
-      const result = validateName(trimmed);
-      if (!result.valid) {
-        setNameError(result.error ?? 'Invalid name');
-        return;
-      }
-      onStageRename(oldName, trimmed);
-      setNameError(null);
-    }
-    setEditingStage(null);
-    setEditingStageName('');
+    setCreateError(null);
   };
 
   return (
     <div className="flex items-center gap-1 px-3 py-2 border-b border-sf-bg-600 overflow-x-auto">
       {stages.map((stage, index) =>
-        editingStage === stage ? (
+        edit.editingItem === stage ? (
           <div key={stage} className="flex flex-col">
             <input
-              type="text"
-              value={editingStageName}
-              onChange={(e) => { setEditingStageName(e.target.value); setNameError(null); }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleRename(stage, editingStageName);
-                if (e.key === 'Escape') {
-                  setEditingStage(null);
-                  setEditingStageName('');
-                  setNameError(null);
-                }
-              }}
-              onBlur={() => handleRename(stage, editingStageName)}
-              className={`input text-sm py-0.5 px-2 w-24 ${nameError ? 'border-red-500' : ''}`}
-              autoFocus
+              {...edit.inputProps(stage)}
+              onClick={(e) => e.stopPropagation()}
+              className={`input text-sm py-0.5 px-2 w-24 ${edit.nameError ? 'border-red-500' : ''}`}
             />
-            {nameError && (
-              <div className="text-xs text-red-400 mt-1 px-1 whitespace-nowrap">{nameError}</div>
+            {edit.nameError && (
+              <div className="text-xs text-red-400 mt-1 px-1 whitespace-nowrap">{edit.nameError}</div>
             )}
           </div>
         ) : (
           <button
             key={stage}
             draggable
-            onDragStart={(e) => {
-              setDraggedIndex(index);
-              e.dataTransfer.effectAllowed = 'move';
-              e.dataTransfer.setData('text/plain', stage);
-            }}
-            onDragEnd={() => {
-              setDraggedIndex(null);
-              setDragOverIndex(null);
-            }}
-            onDragOver={(e) => {
-              e.preventDefault();
-              if (draggedIndex !== null && draggedIndex !== index) {
-                setDragOverIndex(index);
-              }
-            }}
-            onDragLeave={() => setDragOverIndex(null)}
-            onDrop={(e) => {
-              e.preventDefault();
-              if (draggedIndex !== null && draggedIndex !== index) {
-                onStageReorder(draggedIndex, index);
-              }
-              setDraggedIndex(null);
-              setDragOverIndex(null);
-            }}
+            onDragStart={(e) => drag.handleDragStart(e, index)}
+            onDragEnd={drag.handleDragEnd}
+            onDragOver={(e) => drag.handleDragOver(e, index)}
+            onDragLeave={drag.handleDragLeave}
+            onDrop={(e) => drag.handleDrop(e, index)}
             onClick={() => onStageSelect(stage)}
-            onDoubleClick={() => {
-              setEditingStage(stage);
-              setEditingStageName(stage);
-            }}
+            onDoubleClick={() => edit.startEditing(stage)}
             className={`group flex items-center gap-1 px-2 py-1 text-sm rounded transition-colors whitespace-nowrap ${
               activeStage === stage
                 ? 'bg-sf-bg-700 text-sf-text-100'
                 : 'text-sf-text-300 hover:text-sf-text-200 hover:bg-sf-bg-700/50'
-            } ${draggedIndex === index ? 'opacity-50' : ''} ${
-              dragOverIndex === index ? 'ring-2 ring-sf-accent-500' : ''
-            }`}
+            } ${drag.dragClasses(index)}`}
           >
             <GripVertical size={12} className="text-sf-text-400 opacity-0 group-hover:opacity-100 cursor-grab shrink-0" />
             {stage}
@@ -133,21 +83,21 @@ export function StageTabs({
           <input
             type="text"
             value={newStageName}
-            onChange={(e) => { setNewStageName(e.target.value); setNameError(null); }}
+            onChange={(e) => { setNewStageName(e.target.value); setCreateError(null); }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') handleCreate();
               if (e.key === 'Escape') {
                 setShowNewStage(false);
                 setNewStageName('');
-                setNameError(null);
+                setCreateError(null);
               }
             }}
             placeholder="stage_name"
-            className={`input text-sm py-0.5 px-2 w-24 ${nameError ? 'border-red-500' : ''}`}
+            className={`input text-sm py-0.5 px-2 w-24 ${createError ? 'border-red-500' : ''}`}
             autoFocus
           />
-          {nameError && (
-            <div className="text-xs text-red-400 mt-1 px-1 whitespace-nowrap">{nameError}</div>
+          {createError && (
+            <div className="text-xs text-red-400 mt-1 px-1 whitespace-nowrap">{createError}</div>
           )}
         </div>
       ) : (
@@ -163,4 +113,3 @@ export function StageTabs({
     </div>
   );
 }
-

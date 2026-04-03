@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, Copy, ClipboardCheck } from 'lucide-react';
 import { estimateTokens, formatTokenCount } from '../../utils/tokenUtils';
+import { Modal } from '../Modal';
 
 interface PromptPreviewModalProps {
   rawInput: string;
@@ -14,9 +15,8 @@ export function PromptPreviewModal({ rawInput, resolved, errors, warnings, onClo
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-sf-bg-800 rounded-lg shadow-xl border border-sf-bg-600 w-[80vw] max-w-4xl max-h-[80vh] flex flex-col">
-        <div className="flex items-center justify-between p-4 border-b border-sf-bg-600">
+    <Modal onClose={onClose} className="w-[80vw] max-w-4xl max-h-[80vh] flex flex-col">
+      <div className="flex items-center justify-between p-4 border-b border-sf-bg-600">
           <h2 className="text-lg font-semibold text-sf-text-100">Prompt Preview</h2>
           <button
             onClick={onClose}
@@ -105,8 +105,7 @@ export function PromptPreviewModal({ rawInput, resolved, errors, warnings, onClo
             Close
           </button>
         </div>
-      </div>
-    </div>
+      </Modal>
   );
 }
 
