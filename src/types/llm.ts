@@ -14,12 +14,6 @@ export interface LLMConfig {
   isActive: boolean;
 }
 
-/** Chat message format (OpenAI compatible) */
-export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
-
 
 /** Generation status */
 export type GenerationStatus = 'idle' | 'generating' | 'error' | 'success';

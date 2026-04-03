@@ -1,8 +1,9 @@
 /**
  * LLM Service - Handles communication with OpenAI-compatible APIs
+ * Always uses /v1/completions with a plain prompt string.
  */
 
-import type { LLMConfig, ChatMessage } from '../types';
+import type { LLMConfig } from '../types';
 
 /** Error thrown by LLM service */
 export class LLMError extends Error {
@@ -46,12 +47,12 @@ export interface StreamingResult {
 }
 
 /**
- * Send a streaming chat completion request to an OpenAI-compatible API
- * Calls onToken for each token received, allowing live display
+ * Send a streaming completion request to an OpenAI-compatible /v1/completions endpoint.
+ * The full prompt is passed as a plain string.
  */
-export async function sendChatCompletionStreaming(
+export async function sendCompletionStreaming(
   config: LLMConfig,
-  messages: ChatMessage[],
+  prompt: string,
   onToken: (token: string) => void,
   signal?: AbortSignal
 ): Promise<StreamingResult> {
@@ -63,20 +64,20 @@ export async function sendChatCompletionStreaming(
     headers['Authorization'] = `Bearer ${config.apiKey}`;
   }
 
-  const body = {
+  const body: Record<string, unknown> = {
     model: config.model,
-    messages,
+    prompt,
     max_tokens: config.maxTokens,
     temperature: config.temperature,
     stream: true,
-    stream_options: { include_usage: true }, // Request usage stats in stream (OpenAI extension)
+    stream_options: { include_usage: true },
   };
 
   // Track content at function scope so it's available even if aborted
   let fullContent = '';
 
   try {
-    const response = await fetch(`${config.endpoint}/v1/chat/completions`, {
+    const response = await fetch(`${config.endpoint}/v1/completions`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
@@ -110,7 +111,7 @@ export async function sendChatCompletionStreaming(
         if (trimmed.startsWith('data: ')) {
           try {
             const json = JSON.parse(trimmed.slice(6));
-            const content = json.choices?.[0]?.delta?.content;
+            const content = json.choices?.[0]?.text ?? undefined;
             if (content) {
               fullContent += content;
               onToken(content);
@@ -171,7 +172,6 @@ export async function sendChatCompletionStreaming(
       throw error;
     }
     if (error instanceof DOMException && error.name === 'AbortError') {
-      // This shouldn't happen normally as inner catch handles it, but just in case
       throw new LLMCancelledError(fullContent);
     }
     throw new LLMError(`Failed to connect to LLM API: ${(error as Error).message}`);

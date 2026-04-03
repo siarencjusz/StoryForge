@@ -4,8 +4,8 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { LLMConfig, GenerationState, ChatMessage } from '../types';
-import { sendChatCompletionStreaming, pingEndpoint, LLMCancelledError } from '../services/llmService';
+import type { LLMConfig, GenerationState } from '../types';
+import { sendCompletionStreaming, pingEndpoint, LLMCancelledError } from '../services/llmService';
 
 // Default local LLM configuration
 const DEFAULT_CONFIG: LLMConfig = {
@@ -42,7 +42,7 @@ interface LLMStore {
 
   // Generation (streaming)
   generateStreaming: (
-    messages: ChatMessage[],
+    prompt: string,
     onToken: (token: string, fullContent: string) => void,
     onComplete: (content: string) => void,
     onError: (error: string) => void
@@ -116,7 +116,7 @@ export const useLLMStore = create<LLMStore>()(
       },
 
       // Generation (streaming)
-      generateStreaming: async (messages, onToken, onComplete, onError) => {
+      generateStreaming: async (prompt, onToken, onComplete, onError) => {
         const config = get().getActiveConfig();
         if (!config) {
           onError('No active LLM configuration');
@@ -131,9 +131,9 @@ export const useLLMStore = create<LLMStore>()(
         let fullContent = '';
 
         try {
-          const result = await sendChatCompletionStreaming(
+          const result = await sendCompletionStreaming(
             config,
-            messages,
+            prompt,
             (token) => {
               fullContent += token;
               onToken(token, fullContent);

@@ -49,4 +49,13 @@
            placeholder:text-sf-text-400 focus:outline-none focus:border-sf-accent-500
            font-mono text-sm resize-none;
   }
+
+  /* Hide scrollbar on highlighted textarea backdrop so it matches textarea width */
+  .highlight-backdrop {
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/Edge */
+  }
+  .highlight-backdrop::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
+  }
 }

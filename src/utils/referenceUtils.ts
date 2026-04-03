@@ -6,7 +6,7 @@
 import type { Blocks } from '../types';
 
 // Pattern to match references like [block], [category:block], or [category:block:stage]
-const REFERENCE_PATTERN = /\[([a-zA-Z_][a-zA-Z0-9_]*(?::[a-zA-Z_][a-zA-Z0-9_]*){0,2})]/g;
+export const REFERENCE_PATTERN = /\[([a-zA-Z_][a-zA-Z0-9_]*(?::[a-zA-Z_][a-zA-Z0-9_]*){0,2})]/g;
 
 interface ResolvedReference {
   original: string;    // The original [ref] text
@@ -40,7 +40,7 @@ function getBlockOutput(
   // Otherwise, try to find default stage
   // Priority: 'output', 'raw', first stage
   const stageNames = Object.keys(blockData);
-  let targetStage = stageNames.includes('output')
+  const targetStage = stageNames.includes('output')
     ? 'output'
     : stageNames.includes('raw')
       ? 'raw'
@@ -149,3 +149,43 @@ export function resolveReferences(
   return { resolved, errors, references };
 }
 
+/** Segment type for highlighted input rendering */
+export interface InputSegment {
+  text: string;
+  type: 'plain' | 'resolved' | 'error';
+}
+
+/**
+ * Split input text into segments with resolution status for highlighting.
+ * Each segment is either plain text, a resolved reference, or an unresolved reference.
+ */
+export function getInputSegments(input: string, blocks: Blocks): InputSegment[] {
+  const segments: InputSegment[] = [];
+  const pattern = new RegExp(REFERENCE_PATTERN.source, 'g');
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(input)) !== null) {
+    // Add plain text before this match
+    if (match.index > lastIndex) {
+      segments.push({ text: input.slice(lastIndex, match.index), type: 'plain' });
+    }
+
+    // Check if this reference resolves
+    const ref = match[1];
+    const result = resolveReference(ref, blocks);
+    segments.push({
+      text: match[0],
+      type: result.content !== null ? 'resolved' : 'error',
+    });
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  // Add remaining plain text
+  if (lastIndex < input.length) {
+    segments.push({ text: input.slice(lastIndex), type: 'plain' });
+  }
+
+  return segments;
+}

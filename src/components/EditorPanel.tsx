@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Plus, Check, Trash2, RefreshCw, X, Columns2, GripVertical, Sparkles, Square, FastForward, GripHorizontal, Loader2, Eye } from 'lucide-react';
+import { Plus, Check, Trash2, RefreshCw, X, Columns2, GripVertical, Sparkles, Square, FastForward, GripHorizontal, Loader2, Eye, Copy, ClipboardCheck } from 'lucide-react';
 import { useProjectStore } from '../store/projectStore';
 import { useLLMStore } from '../store/llmStore';
 import { resolveReferences } from '../utils/referenceUtils';
 import { estimateTokens, formatTokenCount } from '../utils/tokenUtils';
 import { Hint } from './Hint';
+import { HighlightedTextarea } from './HighlightedTextarea';
 import type { Selection } from '../types';
 
 interface EditorPanelProps {
@@ -62,6 +63,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
   const containerRef = useRef<HTMLDivElement>(null);
   // Prompt preview modal
   const [showPromptPreview, setShowPromptPreview] = useState(false);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
 
   // Handle resize drag
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -116,7 +118,11 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
 
   // Generation handlers - must be defined before any returns
   const handleGenerateNew = useCallback(() => {
-    if (!activeStage || !currentStage || !selection) return;
+    if (!activeStage || !selection) return;
+
+    const freshBlocks = useProjectStore.getState().project.blocks;
+    const stage = getStage(category, block, activeStage);
+    if (!stage) return;
 
     const activeConfig = getActiveConfig();
     if (!activeConfig) {
@@ -124,8 +130,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
       return;
     }
 
-    // Resolve references in the input
-    const { resolved, errors } = resolveReferences(currentStage.input, project.blocks);
+    const { resolved, errors } = resolveReferences(stage.input, freshBlocks);
 
     if (errors.length > 0) {
       alert(`Cannot generate: Missing references:\n${errors.join('\n')}`);
@@ -143,9 +148,9 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
 
     // Send to LLM with streaming
     generateStreaming(
-      [{ role: 'user', content: resolved }],
+      resolved,
       (_token, fullContent) => {
-        // Update content live as tokens arrive
+        // Update content live so streaming text appears in the editor
         updateVersionContent(category, block, activeStage, nextVersion, fullContent);
       },
       (content) => {
@@ -158,10 +163,14 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
         updateVersionContent(category, block, activeStage, nextVersion, `[Generation Error: ${error}]`);
       }
     );
-  }, [activeStage, currentStage, selection, category, block, project.blocks, getActiveConfig, setShowSettings, generateStreaming, addVersion, selectVersion, updateVersionContent, listVersions]);
+  }, [activeStage, selection, category, block, getStage, getActiveConfig, setShowSettings, generateStreaming, addVersion, selectVersion, updateVersionContent, listVersions]);
 
   const handleRegenerate = useCallback(() => {
-    if (!activeStage || !currentStage || !currentStage.selected || !selection) return;
+    if (!activeStage || !selection) return;
+
+    const freshBlocks = useProjectStore.getState().project.blocks;
+    const stage = getStage(category, block, activeStage);
+    if (!stage?.selected) return;
 
     const activeConfig = getActiveConfig();
     if (!activeConfig) {
@@ -169,21 +178,20 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
       return;
     }
 
-    // Resolve references in the input
-    const { resolved, errors } = resolveReferences(currentStage.input, project.blocks);
+    const { resolved, errors } = resolveReferences(stage.input, freshBlocks);
 
     if (errors.length > 0) {
       alert(`Cannot generate: Missing references:\n${errors.join('\n')}`);
       return;
     }
 
-    const currentVersion = currentStage.selected;
+    const currentVersion = stage.selected;
 
     // Send to LLM with streaming
     generateStreaming(
-      [{ role: 'user', content: resolved }],
+      resolved,
       (_token, fullContent) => {
-        // Update content live as tokens arrive
+        // Update content live so streaming text appears in the editor
         updateVersionContent(category, block, activeStage, currentVersion, fullContent);
       },
       (content) => {
@@ -193,10 +201,17 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
         alert(`Generation failed: ${error}`);
       }
     );
-  }, [activeStage, currentStage, selection, category, block, project.blocks, getActiveConfig, setShowSettings, generateStreaming, updateVersionContent]);
+  }, [activeStage, selection, category, block, getStage, getActiveConfig, setShowSettings, generateStreaming, updateVersionContent]);
 
   const handleContinue = useCallback(() => {
-    if (!activeStage || !currentStage || !currentStage.selected || !selection) return;
+    if (!activeStage || !selection) return;
+
+    // Read ALL data fresh from store at click time so user edits to the
+    // output textarea are guaranteed to be picked up even if the React
+    // closure hasn't re-rendered yet.
+    const freshBlocks = useProjectStore.getState().project.blocks;
+    const stage = getStage(category, block, activeStage);
+    if (!stage?.selected) return;
 
     const activeConfig = getActiveConfig();
     if (!activeConfig) {
@@ -205,23 +220,19 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
     }
 
     // Resolve references in the input
-    const { resolved, errors } = resolveReferences(currentStage.input, project.blocks);
+    const { resolved, errors } = resolveReferences(stage.input, freshBlocks);
 
     if (errors.length > 0) {
       alert(`Cannot generate: Missing references:\n${errors.join('\n')}`);
       return;
     }
 
-    const currentVersion = currentStage.selected;
-    const existingContent = currentStage.output[currentVersion] ?? '';
+    const currentVersion = stage.selected;
+    const existingContent = stage.output[currentVersion] ?? '';
 
-    // Send to LLM with existing content as context, streaming
+    // Send to LLM with existing content appended so the model continues from there
     generateStreaming(
-      [
-        { role: 'user', content: resolved },
-        { role: 'assistant', content: existingContent },
-        { role: 'user', content: 'Continue from where you left off.' },
-      ],
+      resolved + existingContent,
       (_token, newContent) => {
         // Update content live - append new tokens to existing content
         updateVersionContent(category, block, activeStage, currentVersion, existingContent + newContent);
@@ -233,7 +244,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
         alert(`Generation failed: ${error}`);
       }
     );
-  }, [activeStage, currentStage, selection, category, block, project.blocks, getActiveConfig, setShowSettings, generateStreaming, updateVersionContent]);
+  }, [activeStage, selection, category, block, getStage, getActiveConfig, setShowSettings, generateStreaming, updateVersionContent]);
 
   const handleStopGeneration = useCallback(() => {
     stopGeneration();
@@ -292,26 +303,14 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
 
   // Compute the full prompt preview (what would be sent to LLM)
   const promptPreview = useMemo(() => {
-    if (!currentStage) return { resolved: '', errors: [], rawInput: '', messages: [] as Array<{ role: string; content: string }> };
+    if (!currentStage) return { resolved: '', errors: [], rawInput: '' };
 
     const { resolved, errors } = resolveReferences(currentStage.input, project.blocks);
-    const selectedOutput = currentStage.selected ? currentStage.output[currentStage.selected] : '';
-
-    // Build the messages array that would be sent to the LLM
-    const messages: Array<{ role: string; content: string }> = [
-      { role: 'user', content: resolved }
-    ];
-
-    // If there's existing output (for continue), show that too
-    if (selectedOutput) {
-      messages.push({ role: 'assistant', content: selectedOutput });
-    }
 
     return {
       resolved,
       errors,
       rawInput: currentStage.input,
-      messages,
     };
   }, [currentStage, project.blocks]);
 
@@ -322,23 +321,16 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
     const confirmed = window.confirm(`Delete version "${version}"? This cannot be undone.`);
     if (!confirmed) return;
 
-    if (versions.length <= 1) {
-      // If this is the last version, create a fresh v1 to replace it
-      deleteVersion(category, block, activeStage, version);
-      addVersion(category, block, activeStage, 'v1', '');
-      selectVersion(category, block, activeStage, 'v1');
-    } else {
-      deleteVersion(category, block, activeStage, version);
+    deleteVersion(category, block, activeStage, version);
 
-      // If we deleted the selected version, select another one
-      if (currentStage?.selected === version) {
-        const remaining = versions.filter(v => v !== version);
-        if (remaining.length > 0) {
-          selectVersion(category, block, activeStage, remaining[0]);
-        }
+    // If we deleted the selected version, select another one
+    if (currentStage?.selected === version) {
+      const remaining = versions.filter(v => v !== version);
+      if (remaining.length > 0) {
+        selectVersion(category, block, activeStage, remaining[0]);
       }
     }
-  }, [activeStage, versions, category, block, currentStage, deleteVersion, selectVersion, addVersion]);
+  }, [activeStage, versions, category, block, currentStage, deleteVersion, selectVersion]);
 
   // No selection state - early return AFTER all hooks
   if (!selection) {
@@ -569,13 +561,14 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
                   <Trash2 size={14} />
                 </button>
               </div>
-              <textarea
+              <HighlightedTextarea
                 value={currentStage.input}
-                onChange={(e) =>
-                  activeStage && updateStageInput(category, block, activeStage, e.target.value)
+                onChange={(val) =>
+                  activeStage && updateStageInput(category, block, activeStage, val)
                 }
+                blocks={project.blocks}
                 placeholder="Enter prompt template... Use [block_name] to reference other blocks"
-                className="textarea w-full flex-1 resize-none"
+                className="w-full flex-1"
               />
               <div className="mt-2 flex justify-end gap-2 shrink-0">
                 <Hint hint="editor-preview" position="top">
@@ -882,7 +875,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
               {/* Resolved Prompt */}
               <div>
                 <h3 className="text-sm font-semibold text-sf-text-300 mb-2">
-                  Resolved Prompt (sent to LLM as user message)
+                  Resolved Prompt (references expanded)
                   <span className="ml-2 text-xs font-mono text-sf-text-400">
                     ~{formatTokenCount(estimateTokens(promptPreview.resolved))} tokens
                   </span>
@@ -891,27 +884,34 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
                   {promptPreview.resolved || '(empty)'}
                 </pre>
               </div>
-
-              {/* Messages array visualization */}
-              <div>
-                <h3 className="text-sm font-semibold text-sf-text-300 mb-2">Messages Array (API Format)</h3>
-                <div className="space-y-2">
-                  {promptPreview.messages.map((msg, i) => (
-                    <div key={i} className="bg-sf-bg-900 rounded border border-sf-bg-600 overflow-hidden">
-                      <div className={`px-3 py-1 text-xs font-semibold ${
-                        msg.role === 'user' ? 'bg-blue-900/30 text-blue-400' : 'bg-green-900/30 text-green-400'
-                      }`}>
-                        {msg.role.toUpperCase()}
-                      </div>
-                      <pre className="p-3 text-sm text-sf-text-200 whitespace-pre-wrap overflow-auto max-h-48">
-                        {msg.content || '(empty)'}
-                      </pre>
-                    </div>
-                  ))}
-                </div>
-              </div>
             </div>
-            <div className="p-4 border-t border-sf-bg-600 flex justify-end">
+            <div className="p-4 border-t border-sf-bg-600 flex justify-between">
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(promptPreview.rawInput);
+                    setCopiedField('instruction');
+                    setTimeout(() => setCopiedField(null), 2000);
+                  }}
+                  className="btn btn-secondary flex items-center gap-2 text-sm"
+                  title="Copy the raw input (with [references] unresolved)"
+                >
+                  {copiedField === 'instruction' ? <ClipboardCheck size={14} className="text-sf-success" /> : <Copy size={14} />}
+                  {copiedField === 'instruction' ? 'Copied!' : 'Copy Instruction'}
+                </button>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(promptPreview.resolved);
+                    setCopiedField('full');
+                    setTimeout(() => setCopiedField(null), 2000);
+                  }}
+                  className="btn btn-secondary flex items-center gap-2 text-sm"
+                  title="Copy the fully resolved prompt (references replaced with content)"
+                >
+                  {copiedField === 'full' ? <ClipboardCheck size={14} className="text-sf-success" /> : <Copy size={14} />}
+                  {copiedField === 'full' ? 'Copied!' : 'Copy Instruction + Context'}
+                </button>
+              </div>
               <button
                 onClick={() => setShowPromptPreview(false)}
                 className="btn btn-primary"
