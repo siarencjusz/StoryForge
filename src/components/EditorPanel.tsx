@@ -1,11 +1,14 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Plus, Check, Trash2, RefreshCw, X, Columns2, GripVertical, Sparkles, Square, FastForward, GripHorizontal, Loader2, Eye, Copy, ClipboardCheck } from 'lucide-react';
+import { Trash2, RefreshCw, X, GripHorizontal, Sparkles, Square, FastForward, Loader2, Eye } from 'lucide-react';
 import { useProjectStore } from '../store/projectStore';
 import { useLLMStore } from '../store/llmStore';
 import { resolveReferences } from '../utils/referenceUtils';
 import { estimateTokens, formatTokenCount } from '../utils/tokenUtils';
 import { Hint } from './Hint';
 import { HighlightedTextarea } from './HighlightedTextarea';
+import { StageTabs } from './editor/StageTabs';
+import { OutputSection } from './editor/OutputSection';
+import { PromptPreviewModal } from './editor/PromptPreviewModal';
 import type { Selection } from '../types';
 
 interface EditorPanelProps {
@@ -43,27 +46,14 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
   const selection = selectionOverride !== undefined ? selectionOverride : storeSelection;
 
   const [activeStage, setActiveStage] = useState<string | null>(null);
-  const [newStageName, setNewStageName] = useState('');
-  const [showNewStage, setShowNewStage] = useState(false);
-  const [editingStage, setEditingStage] = useState<string | null>(null);
-  const [editingStageName, setEditingStageName] = useState('');
-  const [editingVersion, setEditingVersion] = useState<string | null>(null);
-  const [editingVersionName, setEditingVersionName] = useState('');
   // Comparison mode: track up to 2 versions for side-by-side view
   const [compareVersions, setCompareVersions] = useState<[string, string] | null>(null);
-  // Drag & drop state for stages
-  const [draggedStageIndex, setDraggedStageIndex] = useState<number | null>(null);
-  const [dragOverStageIndex, setDragOverStageIndex] = useState<number | null>(null);
-  // Drag & drop state for versions
-  const [draggedVersionIndex, setDraggedVersionIndex] = useState<number | null>(null);
-  const [dragOverVersionIndex, setDragOverVersionIndex] = useState<number | null>(null);
   // Resizable input panel
-  const [inputHeight, setInputHeight] = useState(250); // Default height in pixels
+  const [inputHeight, setInputHeight] = useState(250);
   const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   // Prompt preview modal
   const [showPromptPreview, setShowPromptPreview] = useState(false);
-  const [copiedField, setCopiedField] = useState<string | null>(null);
 
   // Handle resize drag
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -78,7 +68,6 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
       if (!containerRef.current) return;
       const containerRect = containerRef.current.getBoundingClientRect();
       const newHeight = e.clientY - containerRect.top;
-      // Clamp between 100px and container height - 150px (leave room for output)
       const maxHeight = containerRect.height - 150;
       setInputHeight(Math.max(100, Math.min(newHeight, maxHeight)));
     };
@@ -116,7 +105,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
     }
   }, [stages, activeStage]);
 
-  // Generation handlers - must be defined before any returns
+  // Generation handlers
   const handleGenerateNew = useCallback(() => {
     if (!activeStage || !selection) return;
 
@@ -137,28 +126,21 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
       return;
     }
 
-    // Get current versions directly from store to avoid stale closure issues
     const currentVersions = listVersions(category, block, activeStage);
-
-    // Create a new version for the output
     const nextVersion = `v${currentVersions.length + 1}`;
     addVersion(category, block, activeStage, nextVersion, '');
     selectVersion(category, block, activeStage, nextVersion);
     setCompareVersions(null);
 
-    // Send to LLM with streaming
     generateStreaming(
       resolved,
       (_token, fullContent) => {
-        // Update content live so streaming text appears in the editor
         updateVersionContent(category, block, activeStage, nextVersion, fullContent);
       },
       (content) => {
-        // On complete, ensure final content is saved
         updateVersionContent(category, block, activeStage, nextVersion, content);
       },
       (error) => {
-        // On error, show alert and mark the version
         alert(`Generation failed: ${error}`);
         updateVersionContent(category, block, activeStage, nextVersion, `[Generation Error: ${error}]`);
       }
@@ -187,11 +169,9 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
 
     const currentVersion = stage.selected;
 
-    // Send to LLM with streaming
     generateStreaming(
       resolved,
       (_token, fullContent) => {
-        // Update content live so streaming text appears in the editor
         updateVersionContent(category, block, activeStage, currentVersion, fullContent);
       },
       (content) => {
@@ -206,9 +186,6 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
   const handleContinue = useCallback(() => {
     if (!activeStage || !selection) return;
 
-    // Read ALL data fresh from store at click time so user edits to the
-    // output textarea are guaranteed to be picked up even if the React
-    // closure hasn't re-rendered yet.
     const freshBlocks = useProjectStore.getState().project.blocks;
     const stage = getStage(category, block, activeStage);
     if (!stage?.selected) return;
@@ -219,7 +196,6 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
       return;
     }
 
-    // Resolve references in the input
     const { resolved, errors } = resolveReferences(stage.input, freshBlocks);
 
     if (errors.length > 0) {
@@ -230,11 +206,9 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
     const currentVersion = stage.selected;
     const existingContent = stage.output[currentVersion] ?? '';
 
-    // Send to LLM with existing content appended so the model continues from there
     generateStreaming(
       resolved + existingContent,
       (_token, newContent) => {
-        // Update content live - append new tokens to existing content
         updateVersionContent(category, block, activeStage, currentVersion, existingContent + newContent);
       },
       (content) => {
@@ -264,21 +238,14 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
 
     if (!currentStage) return emptyResult;
 
-    // Count raw input tokens (without resolving references)
     const rawInputTokens = estimateTokens(currentStage.input);
-
-    // Get resolved content and references info
     const { resolved, references } = resolveReferences(currentStage.input, project.blocks);
     const resolvedInputTokens = estimateTokens(resolved);
 
-    // Build breakdown of token contributions
     const breakdown: Array<{ ref: string; tokens: number }> = [];
-
-    // Calculate base tokens (input without references)
     const inputWithoutRefs = currentStage.input.replace(/\[[^\]]+\]/g, '');
     const baseTokens = estimateTokens(inputWithoutRefs);
 
-    // Add each reference's contribution
     for (const ref of references) {
       if (ref.content) {
         breakdown.push({
@@ -288,7 +255,6 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
       }
     }
 
-    // Count output tokens for selected version
     const selectedOutput = currentStage.selected ? currentStage.output[currentStage.selected] : '';
     const outputTokens = estimateTokens(selectedOutput || '');
 
@@ -303,36 +269,43 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
 
   // Compute the full prompt preview (what would be sent to LLM)
   const promptPreview = useMemo(() => {
-    if (!currentStage) return { resolved: '', errors: [], rawInput: '' };
+    if (!currentStage) return { resolved: '', errors: [], warnings: [], rawInput: '' };
 
-    const { resolved, errors } = resolveReferences(currentStage.input, project.blocks);
+    const { resolved, errors, warnings } = resolveReferences(currentStage.input, project.blocks);
 
-    return {
-      resolved,
-      errors,
-      rawInput: currentStage.input,
-    };
+    return { resolved, errors, warnings, rawInput: currentStage.input };
   }, [currentStage, project.blocks]);
 
-  // Handler to delete a version with confirmation
-  const handleDeleteVersion = useCallback((version: string) => {
+  // Version action wrappers (bind category/block/stage context)
+  const handleSelectVersion = useCallback((version: string) => {
+    if (activeStage) selectVersion(category, block, activeStage, version);
+  }, [activeStage, category, block, selectVersion]);
+
+  const handleAddVersion = useCallback(() => {
     if (!activeStage) return;
+    const nextVersion = `v${versions.length + 1}`;
+    addVersion(category, block, activeStage, nextVersion, '');
+    selectVersion(category, block, activeStage, nextVersion);
+    setCompareVersions(null);
+  }, [activeStage, category, block, versions.length, addVersion, selectVersion]);
 
-    const confirmed = window.confirm(`Delete version "${version}"? This cannot be undone.`);
-    if (!confirmed) return;
+  const handleDeleteVersionAction = useCallback((version: string) => {
+    if (activeStage) deleteVersion(category, block, activeStage, version);
+  }, [activeStage, category, block, deleteVersion]);
 
-    deleteVersion(category, block, activeStage, version);
+  const handleRenameVersionAction = useCallback((oldName: string, newName: string) => {
+    if (activeStage) renameVersion(category, block, activeStage, oldName, newName);
+  }, [activeStage, category, block, renameVersion]);
 
-    // If we deleted the selected version, select another one
-    if (currentStage?.selected === version) {
-      const remaining = versions.filter(v => v !== version);
-      if (remaining.length > 0) {
-        selectVersion(category, block, activeStage, remaining[0]);
-      }
-    }
-  }, [activeStage, versions, category, block, currentStage, deleteVersion, selectVersion]);
+  const handleReorderVersionsAction = useCallback((from: number, to: number) => {
+    if (activeStage) reorderVersions(category, block, activeStage, from, to);
+  }, [activeStage, category, block, reorderVersions]);
 
-  // No selection state - early return AFTER all hooks
+  const handleUpdateContent = useCallback((version: string, content: string) => {
+    if (activeStage) updateVersionContent(category, block, activeStage, version, content);
+  }, [activeStage, category, block, updateVersionContent]);
+
+  // No selection state
   if (!selection) {
     return (
       <div className="flex items-center justify-center h-full text-sf-text-400">
@@ -343,73 +316,6 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
       </div>
     );
   }
-
-  // Helper functions (not hooks, so can be after early return)
-  const handleCreateStage = () => {
-    if (newStageName.trim()) {
-      addStage(category, block, newStageName.trim());
-      setActiveStage(newStageName.trim());
-      setNewStageName('');
-      setShowNewStage(false);
-    }
-  };
-
-  const handleRenameStage = (oldName: string, newName: string) => {
-    if (newName.trim() && newName !== oldName) {
-      renameStage(category, block, oldName, newName.trim());
-      if (activeStage === oldName) {
-        setActiveStage(newName.trim());
-      }
-    }
-    setEditingStage(null);
-    setEditingStageName('');
-  };
-
-  const handleRenameVersion = (oldName: string, newName: string) => {
-    if (newName.trim() && newName !== oldName && activeStage) {
-      renameVersion(category, block, activeStage, oldName, newName.trim());
-    }
-    setEditingVersion(null);
-    setEditingVersionName('');
-  };
-
-  const handleAddVersion = () => {
-    if (!activeStage) return;
-    const nextVersion = `v${versions.length + 1}`;
-    addVersion(category, block, activeStage, nextVersion, '');
-    selectVersion(category, block, activeStage, nextVersion);
-    setCompareVersions(null); // Exit comparison mode when adding new version
-  };
-
-  const handleVersionClick = (version: string, e: React.MouseEvent) => {
-    if (!activeStage) return;
-
-    if (e.shiftKey && versions.length >= 2) {
-      // Shift+Click: toggle comparison mode
-      if (compareVersions) {
-        // Already comparing - add/remove from comparison
-        if (compareVersions.includes(version)) {
-          // Remove from comparison, exit compare mode
-          setCompareVersions(null);
-        } else {
-          // Replace second version
-          setCompareVersions([compareVersions[0], version]);
-        }
-      } else {
-        // Start comparison with selected + shift-clicked
-        const selected = currentStage?.selected;
-        if (selected && selected !== version) {
-          setCompareVersions([selected, version]);
-        }
-      }
-    } else {
-      // Normal click: select version, exit comparison mode
-      selectVersion(category, block, activeStage, version);
-      setCompareVersions(null);
-    }
-  };
-
-  const isInComparison = (version: string) => compareVersions?.includes(version) ?? false;
 
   return (
     <div className="flex flex-col h-full">
@@ -435,101 +341,22 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
           )}
         </div>
       </div>
+
       {/* Stage tabs */}
-      <div className="flex items-center gap-1 px-3 py-2 border-b border-sf-bg-600 overflow-x-auto">
-        {stages.map((stage, index) => (
-          editingStage === stage ? (
-            <input
-              key={stage}
-              type="text"
-              value={editingStageName}
-              onChange={(e) => setEditingStageName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleRenameStage(stage, editingStageName);
-                if (e.key === 'Escape') {
-                  setEditingStage(null);
-                  setEditingStageName('');
-                }
-              }}
-              onBlur={() => handleRenameStage(stage, editingStageName)}
-              className="input text-sm py-0.5 px-2 w-24"
-              autoFocus
-            />
-          ) : (
-            <button
-              key={stage}
-              draggable
-              onDragStart={(e) => {
-                setDraggedStageIndex(index);
-                e.dataTransfer.effectAllowed = 'move';
-                e.dataTransfer.setData('text/plain', stage);
-              }}
-              onDragEnd={() => {
-                setDraggedStageIndex(null);
-                setDragOverStageIndex(null);
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                if (draggedStageIndex !== null && draggedStageIndex !== index) {
-                  setDragOverStageIndex(index);
-                }
-              }}
-              onDragLeave={() => {
-                setDragOverStageIndex(null);
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                if (draggedStageIndex !== null && draggedStageIndex !== index) {
-                  reorderStages(category, block, draggedStageIndex, index);
-                }
-                setDraggedStageIndex(null);
-                setDragOverStageIndex(null);
-              }}
-              onClick={() => setActiveStage(stage)}
-              onDoubleClick={() => {
-                setEditingStage(stage);
-                setEditingStageName(stage);
-              }}
-              className={`group flex items-center gap-1 px-2 py-1 text-sm rounded transition-colors whitespace-nowrap ${
-                activeStage === stage
-                  ? 'bg-sf-bg-700 text-sf-text-100'
-                  : 'text-sf-text-300 hover:text-sf-text-200 hover:bg-sf-bg-700/50'
-              } ${draggedStageIndex === index ? 'opacity-50' : ''} ${
-                dragOverStageIndex === index ? 'ring-2 ring-sf-accent-500' : ''
-              }`}
-            >
-              <GripVertical size={12} className="text-sf-text-400 opacity-0 group-hover:opacity-100 cursor-grab shrink-0" />
-              {stage}
-            </button>
-          )
-        ))}
-        {showNewStage ? (
-          <input
-            type="text"
-            value={newStageName}
-            onChange={(e) => setNewStageName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleCreateStage();
-              if (e.key === 'Escape') {
-                setShowNewStage(false);
-                setNewStageName('');
-              }
-            }}
-            placeholder="Stage name"
-            className="input text-sm py-0.5 px-2 w-24"
-            autoFocus
-          />
-        ) : (
-          <Hint hint="editor-add-stage" position="bottom">
-            <button
-              onClick={() => setShowNewStage(true)}
-              className="p-1 text-sf-text-400 hover:text-sf-text-200 hover:bg-sf-bg-700 rounded"
-            >
-              <Plus size={16} />
-            </button>
-          </Hint>
-        )}
-      </div>
+      <StageTabs
+        stages={stages}
+        activeStage={activeStage}
+        onStageSelect={setActiveStage}
+        onStageCreate={(name) => {
+          addStage(category, block, name);
+          setActiveStage(name);
+        }}
+        onStageRename={(oldName, newName) => {
+          renameStage(category, block, oldName, newName);
+          if (activeStage === oldName) setActiveStage(newName);
+        }}
+        onStageReorder={(from, to) => reorderStages(category, block, from, to)}
+      />
 
       {/* Stage content */}
       {currentStage ? (
@@ -554,7 +381,11 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
                   </span>
                 </div>
                 <button
-                  onClick={() => activeStage && deleteStage(category, block, activeStage)}
+                  onClick={() => {
+                    if (!activeStage) return;
+                    const confirmed = window.confirm(`Delete stage "${activeStage}"? This cannot be undone.`);
+                    if (confirmed) deleteStage(category, block, activeStage);
+                  }}
                   className="p-1 text-sf-text-400 hover:text-sf-error rounded"
                   title="Delete Stage"
                 >
@@ -638,198 +469,26 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
           </div>
 
           {/* Output section */}
-          <div className="flex-1 flex flex-col p-3 overflow-hidden">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <label className="text-sm font-medium text-sf-text-300">
-                  OUTPUT {currentStage.selected && !compareVersions && `(${currentStage.selected})`}
-                  {compareVersions && (
-                    <span className="ml-2 text-sf-accent-400">
-                      Comparing: {compareVersions[0]} vs {compareVersions[1]}
-                    </span>
-                  )}
-                </label>
-                {!compareVersions && tokenCounts.output > 0 && (
-                  <span className="text-xs text-sf-text-400 font-mono">
-                    ({formatTokenCount(tokenCounts.output)} tokens)
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                {compareVersions ? (
-                  <button
-                    onClick={() => setCompareVersions(null)}
-                    className="p-1 text-sf-text-400 hover:text-sf-text-200 rounded flex items-center gap-1 text-xs"
-                    title="Exit comparison"
-                  >
-                    <X size={14} />
-                    Exit Compare
-                  </button>
-                ) : versions.length >= 2 && (
-                  <span className="text-xs text-sf-text-400">
-                    <Columns2 size={12} className="inline mr-1" />
-                    Shift+Click to compare
-                  </span>
-                )}
-              </div>
-            </div>
-            {/* Version tabs */}
-            <div className="flex items-center gap-1 mb-2">
-              {versions.map((version, index) => (
-                editingVersion === version ? (
-                  <input
-                    key={version}
-                    type="text"
-                    value={editingVersionName}
-                    onChange={(e) => setEditingVersionName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleRenameVersion(version, editingVersionName);
-                      if (e.key === 'Escape') {
-                        setEditingVersion(null);
-                        setEditingVersionName('');
-                      }
-                    }}
-                    onBlur={() => handleRenameVersion(version, editingVersionName)}
-                    className="input text-xs py-0.5 px-2 w-16"
-                    autoFocus
-                  />
-                ) : (
-                  <button
-                    key={version}
-                    draggable
-                    onDragStart={(e) => {
-                      setDraggedVersionIndex(index);
-                      e.dataTransfer.effectAllowed = 'move';
-                      e.dataTransfer.setData('text/plain', version);
-                    }}
-                    onDragEnd={() => {
-                      setDraggedVersionIndex(null);
-                      setDragOverVersionIndex(null);
-                    }}
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      if (draggedVersionIndex !== null && draggedVersionIndex !== index) {
-                        setDragOverVersionIndex(index);
-                      }
-                    }}
-                    onDragLeave={() => {
-                      setDragOverVersionIndex(null);
-                    }}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      if (draggedVersionIndex !== null && draggedVersionIndex !== index && activeStage) {
-                        reorderVersions(category, block, activeStage, draggedVersionIndex, index);
-                      }
-                      setDraggedVersionIndex(null);
-                      setDragOverVersionIndex(null);
-                    }}
-                    onClick={(e) => handleVersionClick(version, e)}
-                    onDoubleClick={() => {
-                      setEditingVersion(version);
-                      setEditingVersionName(version);
-                    }}
-                    className={`group px-2 py-0.5 text-xs rounded flex items-center gap-1 ${
-                      isInComparison(version)
-                        ? 'bg-sf-accent-500 text-white ring-2 ring-sf-accent-300'
-                        : currentStage.selected === version
-                          ? 'bg-sf-accent-600 text-white'
-                          : 'bg-sf-bg-700 text-sf-text-300 hover:bg-sf-bg-600'
-                    } ${draggedVersionIndex === index ? 'opacity-50' : ''} ${
-                      dragOverVersionIndex === index ? 'ring-2 ring-sf-accent-500' : ''
-                    }`}
-                  >
-                    <GripVertical size={10} className="opacity-0 group-hover:opacity-100 cursor-grab shrink-0" />
-                    {version}
-                    {currentStage.selected === version && !compareVersions && <Check size={12} />}
-                    {isInComparison(version) && <Columns2 size={12} />}
-                  </button>
-                )
-              ))}
-              <Hint hint="editor-add-version" position="bottom">
-                <button
-                  onClick={handleAddVersion}
-                  className="px-2 py-0.5 text-xs bg-sf-bg-700 text-sf-text-300 hover:bg-sf-bg-600 rounded"
-                >
-                  <Plus size={12} />
-                </button>
-              </Hint>
-              {/* Delete selected version button - separate from version tabs to avoid accidents */}
-              {currentStage.selected && (
-                <Hint hint="editor-delete-version" position="bottom">
-                  <button
-                    onClick={() => handleDeleteVersion(currentStage.selected)}
-                    className="ml-2 px-2 py-0.5 text-xs bg-sf-bg-700 text-red-400 hover:bg-red-900/30 hover:text-red-300 rounded flex items-center gap-1"
-                  >
-                    <Trash2 size={10} />
-                  </button>
-                </Hint>
-              )}
-            </div>
-            {/* Version content */}
-            <div className="flex-1 overflow-hidden">
-              {compareVersions ? (
-                /* Side-by-side comparison view */
-                <div className="flex gap-3 h-full">
-                  {compareVersions.map((version) => (
-                    <div key={version} className="flex-1 flex flex-col min-w-0">
-                      <div className="flex items-center justify-between mb-2 px-1">
-                        <span className="text-xs font-medium text-sf-text-300">{version}</span>
-                        <button
-                          onClick={() => {
-                            if (activeStage) {
-                              selectVersion(category, block, activeStage, version);
-                              setCompareVersions(null);
-                            }
-                          }}
-                          className="text-xs text-sf-accent-400 hover:text-sf-accent-300"
-                          title="Select this version"
-                        >
-                          <Check size={12} className="inline mr-1" />
-                          Select
-                        </button>
-                      </div>
-                      <textarea
-                        value={currentStage.output[version] ?? ''}
-                        onChange={(e) => {
-                          if (activeStage) {
-                            updateVersionContent(category, block, activeStage, version, e.target.value);
-                          }
-                        }}
-                        className="textarea w-full flex-1"
-                        placeholder="Content..."
-                      />
-                    </div>
-                  ))}
-                </div>
-              ) : currentStage.selected && currentStage.output[currentStage.selected] !== undefined ? (
-                <textarea
-                  value={currentStage.output[currentStage.selected]}
-                  onChange={(e) => {
-                    if (activeStage && currentStage.selected) {
-                      updateVersionContent(category, block, activeStage, currentStage.selected, e.target.value);
-                    }
-                  }}
-                  className="textarea w-full h-full"
-                  placeholder="Generated content will appear here..."
-                />
-              ) : (
-                <div className="text-sf-text-400 text-sm text-center py-8">
-                  {versions.length === 0 ? (
-                    <p>No versions yet. Click Generate or add a version manually.</p>
-                  ) : (
-                    <p>Select a version to view/edit</p>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
+          <OutputSection
+            currentStage={currentStage}
+            versions={versions}
+            outputTokenCount={tokenCounts.output}
+            compareVersions={compareVersions}
+            onCompareVersionsChange={setCompareVersions}
+            onSelectVersion={handleSelectVersion}
+            onAddVersion={handleAddVersion}
+            onDeleteVersion={handleDeleteVersionAction}
+            onRenameVersion={handleRenameVersionAction}
+            onReorderVersions={handleReorderVersionsAction}
+            onUpdateContent={handleUpdateContent}
+          />
         </div>
       ) : (
         <div className="flex-1 flex items-center justify-center text-sf-text-400">
           <div className="text-center">
             <p>No stages in this block</p>
             <button
-              onClick={() => setShowNewStage(true)}
+              onClick={() => addStage(category, block, 'main')}
               className="text-sf-accent-500 hover:underline mt-2"
             >
               Add a stage
@@ -840,87 +499,13 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
 
       {/* Prompt Preview Modal */}
       {showPromptPreview && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-sf-bg-800 rounded-lg shadow-xl border border-sf-bg-600 w-[80vw] max-w-4xl max-h-[80vh] flex flex-col">
-            <div className="flex items-center justify-between p-4 border-b border-sf-bg-600">
-              <h2 className="text-lg font-semibold text-sf-text-100">Prompt Preview</h2>
-              <button
-                onClick={() => setShowPromptPreview(false)}
-                className="p-1 hover:bg-sf-bg-700 rounded text-sf-text-400 hover:text-sf-text-200"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <div className="flex-1 overflow-auto p-4 space-y-4">
-              {/* Errors if any */}
-              {promptPreview.errors.length > 0 && (
-                <div className="bg-red-900/20 border border-red-500/50 rounded p-3">
-                  <h3 className="text-sm font-semibold text-red-400 mb-2">Reference Errors</h3>
-                  <ul className="text-sm text-red-300 list-disc list-inside">
-                    {promptPreview.errors.map((err, i) => (
-                      <li key={i}>{err}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {/* Raw Input */}
-              <div>
-                <h3 className="text-sm font-semibold text-sf-text-300 mb-2">Raw Input (with references)</h3>
-                <pre className="bg-sf-bg-900 rounded p-3 text-sm text-sf-text-200 whitespace-pre-wrap overflow-auto max-h-48 border border-sf-bg-600">
-                  {promptPreview.rawInput || '(empty)'}
-                </pre>
-              </div>
-
-              {/* Resolved Prompt */}
-              <div>
-                <h3 className="text-sm font-semibold text-sf-text-300 mb-2">
-                  Resolved Prompt (references expanded)
-                  <span className="ml-2 text-xs font-mono text-sf-text-400">
-                    ~{formatTokenCount(estimateTokens(promptPreview.resolved))} tokens
-                  </span>
-                </h3>
-                <pre className="bg-sf-bg-900 rounded p-3 text-sm text-sf-text-200 whitespace-pre-wrap overflow-auto max-h-96 border border-sf-bg-600">
-                  {promptPreview.resolved || '(empty)'}
-                </pre>
-              </div>
-            </div>
-            <div className="p-4 border-t border-sf-bg-600 flex justify-between">
-              <div className="flex gap-2">
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(promptPreview.rawInput);
-                    setCopiedField('instruction');
-                    setTimeout(() => setCopiedField(null), 2000);
-                  }}
-                  className="btn btn-secondary flex items-center gap-2 text-sm"
-                  title="Copy the raw input (with [references] unresolved)"
-                >
-                  {copiedField === 'instruction' ? <ClipboardCheck size={14} className="text-sf-success" /> : <Copy size={14} />}
-                  {copiedField === 'instruction' ? 'Copied!' : 'Copy Instruction'}
-                </button>
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(promptPreview.resolved);
-                    setCopiedField('full');
-                    setTimeout(() => setCopiedField(null), 2000);
-                  }}
-                  className="btn btn-secondary flex items-center gap-2 text-sm"
-                  title="Copy the fully resolved prompt (references replaced with content)"
-                >
-                  {copiedField === 'full' ? <ClipboardCheck size={14} className="text-sf-success" /> : <Copy size={14} />}
-                  {copiedField === 'full' ? 'Copied!' : 'Copy Instruction + Context'}
-                </button>
-              </div>
-              <button
-                onClick={() => setShowPromptPreview(false)}
-                className="btn btn-primary"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
+        <PromptPreviewModal
+          rawInput={promptPreview.rawInput}
+          resolved={promptPreview.resolved}
+          errors={promptPreview.errors}
+          warnings={promptPreview.warnings}
+          onClose={() => setShowPromptPreview(false)}
+        />
       )}
     </div>
   );

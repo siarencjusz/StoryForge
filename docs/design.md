@@ -1,6 +1,6 @@
 # StoryForge Design Document
 
-> **Last Updated**: January 29, 2026  
+> **Last Updated**: April 3, 2026  
 > **See also**: [decisions.md](./decisions.md) for all design decisions
 
 ## Overview
@@ -185,18 +185,21 @@ For complete YAML examples, see [schemas/schema_v1.md](./schemas/schema_v1.md).
 **Stage References**:
 - `[alice:raw]` → selected version from alice's raw stage
 - `[alice:summary]` → selected version from alice's summary stage
-- Default stage is configurable per project (usually `summary` or last stage)
+- Default stage fallback: `output` → `raw` → first stage
 
 **Ambiguity Handling**:
-- If `shadow` exists in both `character` and `location`, using `[shadow]` is an error
-- UI prompts user to disambiguate: use `[character:shadow]` or `[location:shadow]`
-- When a new block creates ambiguity, UI offers to update existing short references
+- If `shadow` exists in both `character` and `location`, using `[shadow]` currently picks the first category match
+- Fully-qualified form `[character:shadow]` is recommended when ambiguity is possible
 
 **Rename Behavior**:
-- Renaming a block automatically updates ALL references across all blocks
+- Renaming a block automatically updates ALL references across all stage inputs (implemented via `propagateBlockRename` in `referenceUtils.ts`)
+- Renaming a category automatically updates ALL qualified references (implemented via `propagateCategoryRename`)
 - Cannot rename to a name that already exists in the same category
-- Moving to a different category is allowed
 
+**Name Validation**:
+- All block, category, and stage names must match `[a-zA-Z_][a-zA-Z0-9_]*` (max 64 chars)
+- Enforced in both the store (defensive guard) and UI (inline error messages)
+- See `src/utils/nameValidation.ts`
 
 #### Prompt Library
 
@@ -257,7 +260,7 @@ yaml root → blocks → category → block_name → stage → [input, selected,
 ```
 
 - No redundant IDs - dictionary keys provide uniqueness
-- Loads directly as Python nested dictionaries
+- Loads directly as TypeScript nested objects
 - `blocks[category][block_name][stage]` for direct access
 - Versions are simple strings (not metadata objects)
 
@@ -280,32 +283,35 @@ This graph enables:
 
 ---
 
-## Proposed Architecture
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     StoryForge UI (React)                   │
+│                     StoryForge UI (React)                    │
 │  ┌────────────┐  ┌──────────────────┐  ┌────────────────┐  │
 │  │    Tree    │  │     Editor       │  │  Dependency    │  │
 │  │   Panel    │  │     Panel        │  │    Panel       │  │
 │  └────────────┘  └──────────────────┘  └────────────────┘  │
 ├─────────────────────────────────────────────────────────────┤
-│                    REST API (FastAPI)                       │
-├─────────────────────────────────────────────────────────────┤
-│                     Core Engine                             │
+│                    Zustand State Management                  │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
-│  │   Block     │  │  Reference  │  │      LLM            │ │
-│  │   Manager   │  │  Resolver   │  │      Interface      │ │
-│  └─────────────┘  └─────────────┘  └─────────────────────┘ │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
-│  │   Version   │  │  Dependency │  │   Token Counter     │ │
-│  │   Manager   │  │  Tracker    │  │                     │ │
+│  │  Project    │  │    LLM      │  │      Hints          │ │
+│  │   Store     │  │   Store     │  │      Store          │ │
 │  └─────────────┘  └─────────────┘  └─────────────────────┘ │
 ├─────────────────────────────────────────────────────────────┤
-│                    Storage Layer                            │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │              Single YAML Project File               │   │
-│  └─────────────────────────────────────────────────────┘   │
+│                    Services & Utilities                      │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
+│  │  Reference  │  │  LLM        │  │  Name Validation    │ │
+│  │  Resolver   │  │  Service    │  │  + File Utils       │ │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘ │
+├─────────────────────────────────────────────────────────────┤
+│              Storage (YAML file + localStorage)             │
+│  ┌────────────────────────┐  ┌────────────────────────┐    │
+│  │  Single YAML Project   │  │  Browser localStorage  │    │
+│  │  File (via File API)   │  │  (LLM config, UI state)│    │
+│  └────────────────────────┘  └────────────────────────┘    │
+├─────────────────────────────────────────────────────────────┤
+│              Desktop Packaging (Electron)                    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -400,37 +406,38 @@ This graph enables:
 
 ### Architecture
 
-**Decision**: Direct OpenAI API with custom abstraction layer (no LangChain/LiteLLM).
+**Decision**: Direct browser fetch to OpenAI-compatible `/v1/chat/completions` endpoints. No backend needed.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    LLM Interface (Abstract)                  │
+│                    LLM Service (TypeScript)                   │
 │  ┌─────────────────────────────────────────────────────┐   │
-│  │  generate(prompt, config) → response                 │   │
-│  │  count_tokens(text) → int                           │   │
-│  │  get_models() → list                                │   │
+│  │  sendCompletionStreaming(config, prompt, onToken)     │   │
+│  │  pingEndpoint(endpoint, apiKey)                       │   │
 │  └─────────────────────────────────────────────────────┘   │
 ├─────────────────────────────────────────────────────────────┤
-│                    Provider Implementations                  │
+│                    Any OpenAI-compatible API                  │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
-│  │   OpenAI    │  │  Anthropic  │  │   Ollama (future)   │ │
-│  │  (Initial)  │  │  (future)   │  │                     │ │
+│  │   OpenAI    │  │   Ollama    │  │  LM Studio / vLLM   │ │
+│  │  (cloud)    │  │  (local)    │  │  llama.cpp (local)   │ │
 │  └─────────────┘  └─────────────┘  └─────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 **Benefits**:
-- Minimal dependencies
-- Full control over API calls
-- Easy to add new providers
+- No backend server needed — runs entirely in browser
+- Works with any OpenAI-compatible endpoint
+- Streaming via Server-Sent Events
 - Simple error handling
 
-### Initial Provider: OpenAI
+### Initial Provider: Any OpenAI-compatible endpoint
 
-MVP will support OpenAI API only. Abstraction layer allows adding other providers in P2:
-- Anthropic (Claude)
-- Local models via Ollama
-- OpenAI-compatible APIs (LM Studio, vLLM)
+The app connects to any `/v1/chat/completions` endpoint. Tested with:
+- OpenAI (cloud)
+- Ollama (local)
+- LM Studio (local)
+- llama.cpp server (local)
+- vLLM (local)
 
 ### LLM Configuration
 
@@ -450,6 +457,10 @@ interface LLMConfig {
   isActive: boolean;   // Whether this config is active
 }
 ```
+
+**System Prompt Convention**:
+
+System prompts are part of the block input text, not the LLM config. If a stage input starts with `### SYSTEM:` followed by content and then `### USER:`, the text is split into system and user messages for the chat completions API. This allows different system prompts per block/stage goal.
 
 **Features**:
 - **Multiple Configurations**: Add, edit, delete LLM configurations
@@ -528,41 +539,50 @@ All design decisions are tracked in [decisions.md](./decisions.md).
 - Token counts calculated at runtime (not stored)
 - No timestamps stored
 - Browser-based LLM config in localStorage (Zustand persist)
-- Direct OpenAI-compatible API (supports local LLMs like llama.cpp, Ollama, LM Studio)
-- FastAPI + React + TypeScript + Tailwind
+- Direct OpenAI-compatible `/v1/chat/completions` API (no backend)
+- React 19 + TypeScript + Tailwind + Vite + Zustand + Electron
 - UI-only (no CLI)
+- Name validation on all identifiers (`[a-zA-Z_][a-zA-Z0-9_]*`)
+- Rename propagation updates all references automatically
 
 ---
 
 ## Technology Stack
 
-| Layer        | Technology   | Purpose             |
-|--------------|--------------|---------------------|
-| **Frontend** | React 18+    | UI framework        |
-|              | TypeScript   | Type safety         |
-|              | Tailwind CSS | Styling             |
-|              | Vite         | Build tool          |
-| **Backend**  | Python 3.11+ | Core logic          |
-|              | FastAPI      | REST API framework  |
-|              | Pydantic     | Data validation     |
-|              | uvicorn      | ASGI server         |
-| **Storage**  | YAML         | Project files       |
-| **LLM**      | httpx        | OpenAI API calls    |
+| Layer           | Technology        | Purpose                        |
+|-----------------|-------------------|--------------------------------|
+| **Frontend**    | React 19          | UI framework                   |
+|                 | TypeScript        | Type safety                    |
+|                 | Tailwind CSS      | Styling                        |
+|                 | Vite              | Build tool                     |
+|                 | Zustand           | State management + persistence |
+| **Desktop**     | Electron          | Desktop packaging (Win + Linux)|
+| **Storage**     | YAML (js-yaml)    | Project files                  |
+|                 | localStorage      | LLM config, UI state           |
+| **LLM**        | fetch (browser)   | OpenAI-compatible API calls    |
+| **Testing**     | Vitest            | Unit testing                   |
 
 ### Development Setup
 
 ```bash
-# Backend
-cd backend/
-uv sync
-uv run uvicorn main:app --reload
-
-# Frontend  
-cd frontend/
+# Install dependencies
 npm install
-npm run dev
-```
 
+# Development (web)
+npm run dev
+
+# Development (Electron)
+npm run electron:dev
+
+# Build
+npm run build
+
+# Test
+npm test
+
+# Lint
+npm run lint
+```
 
 ---
 
@@ -591,45 +611,52 @@ npm run dev
 
 ## Development Phases
 
-### Phase 1: Core Data Model
-- [ ] Define Block schema and YAML structure (category:block_name, stages)
-- [ ] Implement project file load/save
-- [ ] Tag parsing and reference resolution (`[block_name]`, `[category:block_name]`, `[block_name:stage]`)
-- [ ] Dependency tracking (uses/used-by)
+### Phase 1: Core Data Model ✅
+- [x] Define Block schema and YAML structure (category:block_name, stages)
+- [x] Implement project file load/save
+- [x] Tag parsing and reference resolution (`[block_name]`, `[category:block_name]`, `[category:block_name:stage]`)
+- [x] Dependency tracking (uses/used-by)
 
-### Phase 2: LLM Integration
-- [ ] Abstract LLM interface
-- [ ] OpenAI provider implementation
-- [ ] Context assembly from resolved references
-- [ ] Generation with multiple versions
-- [ ] Runtime token counting and warnings
+### Phase 2: LLM Integration ✅
+- [x] LLM service with streaming
+- [x] OpenAI-compatible `/v1/chat/completions` endpoint support
+- [x] Context assembly from resolved references
+- [x] Generation with multiple versions
+- [x] Runtime token counting and display
 
-### Phase 3: Version Management
-- [ ] Store and list versions per stage (simple strings)
-- [ ] Select preferred version per stage
-- [ ] Manual version editing/merging
-- [ ] Stage creation (raw, refined, summary, etc.)
+### Phase 3: Version Management ✅
+- [x] Store and list versions per stage (simple strings)
+- [x] Select preferred version per stage
+- [x] Manual version editing
+- [x] Stage creation (raw, refined, summary, etc.)
 
-### Phase 4: Tree-Based UI (MVP)
-- [ ] Tree panel with category folders
-- [ ] Editor panel for stage input/output
-- [ ] Dependency panel showing uses/used-by
-- [ ] Block creation, editing, deletion
-- [ ] Tag autocomplete when typing `[`
-- [ ] Token count display (runtime)
-- [ ] Version comparison view
+### Phase 4: Tree-Based UI (MVP) ✅
+- [x] Tree panel with category folders
+- [x] Editor panel for stage input/output
+- [x] Dependency panel showing uses/used-by
+- [x] Block creation, editing, deletion
+- [x] Reference highlighting in input
+- [x] Token count display (runtime)
+- [x] Version comparison view
+- [x] Drag & drop reordering (categories, blocks, stages, versions)
 
-### Phase 5: Enhanced Features
-- [ ] Multiple LLM providers (via abstraction)
-- [ ] Pre-built prompt templates
+### Phase 5: Quality & Robustness (Current)
+- [x] Name validation on all identifiers
+- [x] Rename propagation (automatic reference updates)
+- [x] Vitest test framework + initial tests (50 tests)
+- [x] Electron desktop packaging (Windows + Linux)
+- [x] Chat completions API with system prompt convention
+- [ ] Error boundary for React components
+- [ ] DependencyPanel refactor to use shared referenceUtils
+- [ ] EditorPanel decomposition into sub-components
+
+### Phase 6: Enhanced Features (Future)
+- [ ] `[block:stage]` two-part reference syntax
+- [ ] Undo/Redo
 - [ ] Search and filter blocks
+- [ ] Pre-built prompt templates
 - [ ] Stale block detection
 - [ ] Regeneration cascade
-
-### Phase 6: Polish
-- [ ] Rich editing experience
-- [ ] Documentation and tutorials
-- [ ] Performance optimization for large projects
 
 ---
 
@@ -637,39 +664,42 @@ npm run dev
 
 See [decisions.md](./decisions.md) for complete decision log.
 
-| Category      | Decision                                                     |
-|---------------|--------------------------------------------------------------|
-| **UI**        | Tree + Dependency Panel (React, TypeScript, Tailwind)        |
-| **Backend**   | FastAPI + Python 3.11+                                       |
-| **Storage**   | Single YAML file per project                                 |
-| **Blocks**    | Unified model - all content is blocks                        |
-| **Structure** | Block = dict of stages, each with input/selected/output      |
-| **Tags**      | Unique within category, `[category:block_name:stage]` syntax |
-| **Versions**  | Simple strings, unlimited, side-by-side comparison           |
-| **Tokens**    | Calculated at runtime, not stored                            |
+| Category      | Decision                                                      |
+|---------------|---------------------------------------------------------------|
+| **UI**        | Tree + Dependency Panel (React 19, TypeScript, Tailwind)      |
+| **Desktop**   | Electron (Windows + Linux)                                    |
+| **Storage**   | Single YAML file per project + localStorage for config        |
+| **Blocks**    | Unified model - all content is blocks                         |
+| **Structure** | Block = dict of stages, each with input/selected/output       |
+| **Names**     | Identifier-safe (`[a-zA-Z_][a-zA-Z0-9_]*`), max 64 chars     |
+| **Tags**      | Unique within category, `[category:block_name:stage]` syntax  |
+| **Versions**  | Simple strings, unlimited, side-by-side comparison            |
+| **Tokens**    | Calculated at runtime, not stored                             |
+| **LLM**       | Direct `/v1/chat/completions` fetch, no backend               |
+| **Testing**   | Vitest                                                        |
 
 ---
 
 ## Pre-Implementation Tasks
 
-Before coding, ensure these are addressed:
+All critical pre-implementation tasks have been completed:
 
-1. **Schema finalization**:
+1. **Schema finalization**: ✅
    - [x] `schema_version` field for migrations
    - [x] Unified block model (no separate types)
    - [x] Block = dict of stages structure
    - [x] Versions as simple strings
    - [x] No stored timestamps or token counts
 
-2. **LLM abstraction layer**:
-   - [ ] Define abstract interface
-   - [ ] Implement OpenAI provider
-   - [ ] Error handling (rate limit, timeout, invalid key)
+2. **LLM service**: ✅
+   - [x] Chat completions streaming service
+   - [x] System prompt parsing from input
+   - [x] Error handling (network, API errors, abort/cancel)
 
-3. **Error states to define**:
-   - [ ] LLM API errors (rate limit, timeout, invalid key)
-   - [ ] Validation errors (ambiguous refs, missing refs)
-   - [ ] File errors (corrupt YAML, permission denied)
+3. **Data integrity**: ✅
+   - [x] Name validation on all identifiers
+   - [x] Rename propagation for all references
+   - [x] Reference resolution with error reporting
 
 ---
 

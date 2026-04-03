@@ -1,6 +1,7 @@
-import { ChevronRight, ChevronDown, Folder, FileText, Plus, PanelRight, Copy, X, GripVertical } from 'lucide-react';
+import { ChevronRight, ChevronDown, Folder, FileText, Plus, PanelRight, Copy, X, GripVertical, Search } from 'lucide-react';
 import { useProjectStore } from '../store/projectStore';
-import { useState, type DragEvent } from 'react';
+import { useState, useMemo, type DragEvent } from 'react';
+import { validateName } from '../utils/nameValidation';
 
 export function TreePanel() {
   const {
@@ -31,6 +32,7 @@ export function TreePanel() {
   const [editingCategoryName, setEditingCategoryName] = useState('');
   const [editingBlock, setEditingBlock] = useState<{ category: string; block: string } | null>(null);
   const [editingBlockName, setEditingBlockName] = useState('');
+  const [nameError, setNameError] = useState<string | null>(null);
 
   // Drag and drop state
   const [draggedCategory, setDraggedCategory] = useState<string | null>(null);
@@ -38,23 +40,54 @@ export function TreePanel() {
   const [dropTargetCategory, setDropTargetCategory] = useState<string | null>(null);
   const [dropTargetBlock, setDropTargetBlock] = useState<{ category: string; block: string } | null>(null);
 
+  // Search / filter state
+  const [searchQuery, setSearchQuery] = useState('');
+
   const categories = listCategories();
   const expandedCategories = project.tree.expanded_categories;
 
-  const handleCreateCategory = () => {
-    if (newCategoryName.trim()) {
-      createCategory(newCategoryName.trim());
-      setNewCategoryName('');
-      setShowNewCategory(false);
+  // Filter categories and blocks by search query
+  const filteredTree = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return null; // null = no filter, show everything
+
+    const result: Record<string, string[]> = {};
+    for (const cat of categories) {
+      const blocks = listBlocks(cat);
+      const matchingBlocks = blocks.filter(
+        b => b.toLowerCase().includes(query) || cat.toLowerCase().includes(query)
+      );
+      if (matchingBlocks.length > 0 || cat.toLowerCase().includes(query)) {
+        result[cat] = matchingBlocks.length > 0 ? matchingBlocks : blocks;
+      }
     }
+    return result;
+  }, [searchQuery, categories, listBlocks]);
+
+  const handleCreateCategory = () => {
+    const name = newCategoryName.trim();
+    const result = validateName(name);
+    if (!result.valid) {
+      setNameError(result.error ?? 'Invalid name');
+      return;
+    }
+    createCategory(name);
+    setNewCategoryName('');
+    setShowNewCategory(false);
+    setNameError(null);
   };
 
   const handleCreateBlock = (category: string) => {
-    if (newBlockName.trim()) {
-      createBlock(category, newBlockName.trim());
-      setNewBlockName('');
-      setNewBlockCategory(null);
+    const name = newBlockName.trim();
+    const result = validateName(name);
+    if (!result.valid) {
+      setNameError(result.error ?? 'Invalid name');
+      return;
     }
+    createBlock(category, name);
+    setNewBlockName('');
+    setNewBlockCategory(null);
+    setNameError(null);
   };
 
   const handleDeleteBlock = (category: string, block: string) => {
@@ -90,16 +123,30 @@ export function TreePanel() {
   };
 
   const handleRenameCategory = (oldName: string, newName: string) => {
-    if (newName.trim() && newName !== oldName) {
-      renameCategory(oldName, newName.trim());
+    const trimmed = newName.trim();
+    if (trimmed && trimmed !== oldName) {
+      const result = validateName(trimmed);
+      if (!result.valid) {
+        setNameError(result.error ?? 'Invalid name');
+        return;
+      }
+      renameCategory(oldName, trimmed);
+      setNameError(null);
     }
     setEditingCategory(null);
     setEditingCategoryName('');
   };
 
   const handleRenameBlock = (category: string, oldName: string, newName: string) => {
-    if (newName.trim() && newName !== oldName) {
-      renameBlock(category, oldName, newName.trim());
+    const trimmed = newName.trim();
+    if (trimmed && trimmed !== oldName) {
+      const result = validateName(trimmed);
+      if (!result.valid) {
+        setNameError(result.error ?? 'Invalid name');
+        return;
+      }
+      renameBlock(category, oldName, trimmed);
+      setNameError(null);
     }
     setEditingBlock(null);
     setEditingBlockName('');
@@ -227,29 +274,35 @@ export function TreePanel() {
       <div className="flex-1 overflow-y-auto p-2">
         {/* New category input */}
         {showNewCategory && (
-          <div className="mb-2 flex gap-1">
-            <input
-              type="text"
-              value={newCategoryName}
-              onChange={(e) => setNewCategoryName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleCreateCategory();
-                if (e.key === 'Escape') {
-                  setShowNewCategory(false);
-                  setNewCategoryName('');
-                }
-              }}
-              placeholder="Category name"
-              className="input flex-1 text-sm py-1"
-              autoFocus
-            />
+          <div className="mb-2">
+            <div className="flex gap-1">
+              <input
+                type="text"
+                value={newCategoryName}
+                onChange={(e) => { setNewCategoryName(e.target.value); setNameError(null); }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleCreateCategory();
+                  if (e.key === 'Escape') {
+                    setShowNewCategory(false);
+                    setNewCategoryName('');
+                    setNameError(null);
+                  }
+                }}
+                placeholder="category_name"
+                className={`input flex-1 text-sm py-1 ${nameError ? 'border-red-500' : ''}`}
+                autoFocus
+              />
+            </div>
+            {nameError && (
+              <div className="text-xs text-red-400 mt-1 px-1">{nameError}</div>
+            )}
           </div>
         )}
 
         {/* Categories */}
-        {categories.map((category) => {
-          const isExpanded = expandedCategories.includes(category);
-          const blocks = listBlocks(category);
+        {(filteredTree ? Object.keys(filteredTree) : categories).map((category) => {
+          const isExpanded = filteredTree ? true : expandedCategories.includes(category);
+          const blocks = filteredTree ? filteredTree[category] : listBlocks(category);
 
           return (
             <div key={category} className="mb-1">
@@ -329,22 +382,28 @@ export function TreePanel() {
                 <div className="ml-4">
                   {/* New block input */}
                   {newBlockCategory === category && (
-                    <div className="my-1 flex gap-1">
-                      <input
-                        type="text"
-                        value={newBlockName}
-                        onChange={(e) => setNewBlockName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') handleCreateBlock(category);
-                          if (e.key === 'Escape') {
-                            setNewBlockCategory(null);
-                            setNewBlockName('');
-                          }
-                        }}
-                        placeholder="Block name"
-                        className="input flex-1 text-sm py-1"
-                        autoFocus
-                      />
+                    <div className="my-1">
+                      <div className="flex gap-1">
+                        <input
+                          type="text"
+                          value={newBlockName}
+                          onChange={(e) => { setNewBlockName(e.target.value); setNameError(null); }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleCreateBlock(category);
+                            if (e.key === 'Escape') {
+                              setNewBlockCategory(null);
+                              setNewBlockName('');
+                              setNameError(null);
+                            }
+                          }}
+                          placeholder="block_name"
+                          className={`input flex-1 text-sm py-1 ${nameError ? 'border-red-500' : ''}`}
+                          autoFocus
+                        />
+                      </div>
+                      {nameError && (
+                        <div className="text-xs text-red-400 mt-1 px-1">{nameError}</div>
+                      )}
                     </div>
                   )}
 
@@ -454,13 +513,26 @@ export function TreePanel() {
         )}
       </div>
 
-      {/* Search (placeholder) */}
+      {/* Search */}
       <div className="p-2 border-t border-sf-bg-600">
-        <input
-          type="text"
-          placeholder="Search blocks..."
-          className="input w-full text-sm py-1.5"
-        />
+        <div className="relative">
+          <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-sf-text-400 pointer-events-none" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Filter blocks..."
+            className="input w-full text-sm py-1.5 pl-7 pr-7"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-sf-text-400 hover:text-sf-text-200"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

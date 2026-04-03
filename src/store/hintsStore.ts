@@ -43,7 +43,7 @@ export const HINTS: Record<string, string> = {
   // Editor panel
   'editor-stage-tab': 'Stages are processing steps for a block. Click to switch, double-click to rename, drag to reorder.',
   'editor-add-stage': 'Add a new stage to this block. Stages let you build complex prompts step by step.',
-  'editor-input': 'Write your prompt here. Use [block_name] or [category:block] to reference other blocks\' outputs.',
+  'editor-input': 'Write your prompt here. Use [block_name] or [category:block] to reference other blocks\' outputs. Start with "### SYSTEM:" and "### USER:" to set a custom system prompt for this stage.',
   'editor-generate-new': 'Send the input to the LLM and create a new output version.',
   'editor-regenerate': 'Replace the current version with a new generation.',
   'editor-continue': 'Continue generating from where the current output ends.',

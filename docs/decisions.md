@@ -1,6 +1,6 @@
 # StoryForge - Decision Summary
 
-> **Last Updated**: January 29, 2026  
+> **Last Updated**: April 3, 2026  
 > **Purpose**: Single source of truth for all design decisions
 
 ---
@@ -24,7 +24,7 @@
 | Frontend Stack   | React 19, TypeScript, Tailwind CSS, Vite | Type safety, rapid development, modern DX                             |
 | State Management | Zustand with persistence                 | Lightweight, simple API, localStorage persistence                     |
 | Theme            | **Dark theme** (implemented)             | Easier on eyes for long writing sessions, modern aesthetic            |
-| Standalone       | Web-based, no editor integrations        | Focus on core product                                                 |
+| Standalone       | Web-based + Electron desktop             | Focus on core product, dual distribution                              |
 
 ### UI Implementation Details
 
@@ -37,6 +37,7 @@
 | Block Duplication     | One-click button on hover                 | Quick workflow for similar blocks                |
 | Version Comparison    | Shift+Click for side-by-side              | Doesn't require extra UI space                   |
 | File Operations       | Browser File API (no backend needed)      | Works offline, simpler architecture              |
+| Input Textarea Highlight | Auto-sized textarea inside scrollable parent | Eliminates cursor-position mismatch bug (see below) |
 
 ### Block System
 
@@ -44,10 +45,11 @@
 |------------------------|----------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------|
 | Block Model            | Unified - all content is blocks                                                              | No separate "instruction" type; prompts are blocks in `prompts` category       |
 | Block Name Uniqueness  | Unique within category                                                                       | `[category:block_name]` composite key allows same name in different categories |
-| Reference Syntax       | `[block_name]`, `[category:block_name]`, `[block_name:stage]`, `[category:block_name:stage]` | Flexible, explicit when needed                                                 |
-| Default Reference Mode | Configurable (summary or full)                                                               | Project-level setting                                                          |
+| Reference Syntax       | `[block_name]`, `[category:block_name]`, `[category:block_name:stage]`                       | Flexible, explicit when needed                                                 |
+| Two-Part References    | `[a:b]` always resolves as `category:block`                                                  | Simplicity; `block:stage` syntax deferred to future                            |
 | Rename Behavior        | Auto-propagate to all references                                                             | Consistency, prevents broken refs                                              |
-| Ambiguity Handling     | Error + prompt to disambiguate                                                               | Fail-safe, user control                                                        |
+| Name Validation        | `[a-zA-Z_][a-zA-Z0-9_]*`, max 64 chars                                                      | Identifier-safe, prevents reference parsing issues                             |
+| Ambiguous Short Refs   | Warn (amber) but resolve to first match                                                      | Doesn't block generation; informs user to qualify with `[cat:block]`           |
 
 ### Block Structure
 
@@ -91,6 +93,7 @@ See [schemas/schema_v1.md](./schemas/schema_v1.md) for complete YAML examples.
 | Token Counting        | Estimated at runtime, displayed in UI             | Approximation based on text, API usage when available      |
 | Streaming             | Server-Sent Events (SSE)                          | Live token display, ability to stop generation             |
 | Unresolved References | Error shown, blocks generation                    | Fail-safe approach                                         |
+| System Prompt         | Parsed from input text (`### SYSTEM:` / `### USER:`) | Allows different system prompts per block/stage goal    |
 
 ### Development
 
@@ -99,34 +102,30 @@ See [schemas/schema_v1.md](./schemas/schema_v1.md) for complete YAML examples.
 | Language        | TypeScript                    | Type safety, modern tooling     |
 | Package Manager | npm                           | Standard, well-supported        |
 | Build Tool      | Vite                          | Fast, modern, great DX          |
-| Testing         | (not yet implemented)         | Consider Vitest for future      |
+| Testing         | Vitest                        | Fast, Vite-native, ~50 tests    |
+| Desktop         | Electron (Windows + Linux)    | Cross-platform, web tech reuse  |
 | CLI             | None (UI-only)                | Web UI is the only interface    |
 
 ---
 
-## ⏸️ Deferred Decisions (P2+)
+## ⏸️ Deferred Decisions (Future)
 
-| Decision                 | Deferred To | Reason                                               |
-|--------------------------|-------------|------------------------------------------------------|
-| Export Formats           | Future      | Depends on how project evolves                       |
-| Multiple LLM Providers   | P2          | Start with OpenAI, add others via abstraction layer  |
-| Editor Integrations      | No plans    | Focus on standalone experience                       |
-| Real-time Collaboration  | No plans    | Single author focus, file-based storage              |
-
----
-
-## 🔴 Pending Decisions (Decide Before Coding)
-
-*All critical decisions have been finalized.*
+| Decision                         | Deferred To | Reason                                               |
+|----------------------------------|-------------|------------------------------------------------------|
+| `[block:stage]` two-part refs    | Future      | `[a:b]` resolves as `category:block` for now         |
+| Export Formats                   | Future      | Depends on how project evolves                       |
+| Undo/Redo                        | Future      | Low priority; versions preserve generation history   |
+| Search & Filter                  | Future      | TreePanel placeholder exists, not a priority         |
+| Multiple LLM Providers           | Future      | Start with OpenAI-compatible, add others later       |
+| Editor Integrations              | No plans    | Focus on standalone experience                       |
+| Real-time Collaboration          | No plans    | Single author focus, file-based storage              |
+| macOS build                      | No plans    | Not a target at the moment                           |
 
 ---
 
-## 🟡 Nice-to-Have Features (Not Required for MVP)
+## 🟡 Open Questions
 
-| Feature           | Options                                  | Notes                                                                                                                                                                        |
-|-------------------|------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Undo/Redo**     | Project snapshots OR command history     | Low priority - versions already preserve all generation history. Options: (1) periodic YAML snapshots in config folder, (2) UI command history with limit. Consider for P2.  |
-| **Multi-project** | Open two projects simultaneously         | Useful for copying content between projects. Consider for P2.                                                                                                                |
+_None — all resolved. See git history for past questions._
 
 ---
 
@@ -134,6 +133,8 @@ See [schemas/schema_v1.md](./schemas/schema_v1.md) for complete YAML examples.
 
 | Approach                          | Reason Abandoned                                                                          |
 |-----------------------------------|-------------------------------------------------------------------------------------------|
+| **Textarea + Backdrop Overlay**   | Scrollbar gutter width mismatch causes different line-wrapping between the hidden-text textarea and the visible-text backdrop, creating a cursor-position mismatch bug on wrapped lines. Replaced by auto-sized textarea inside scrollable parent pattern. See `HighlightedTextarea.tsx` JSDoc. |
+| **`default_reference_mode` setting** | Defined in types/schema but never used by any code. Removed instead of implementing.    |
 | **Python Backend**                | Unnecessary complexity; browser can call LLM APIs directly                                |
 | **FastAPI + uvicorn**             | Frontend-only approach is simpler, works offline, no server needed                        |
 | **Canvas/Graph View**             | Complexity; tree view is sufficient, may reconsider in distant future                     |

@@ -1,7 +1,7 @@
 # StoryForge Schema v1
 
 > **Schema Version**: 1  
-> **Last Updated**: January 28, 2026
+> **Last Updated**: April 3, 2026
 
 This document defines the complete YAML schema for StoryForge project files.
 
@@ -11,7 +11,7 @@ This document defines the complete YAML schema for StoryForge project files.
 
 1. **Use YAML's natural nested dictionary structure** - no redundant IDs
 2. **Unique keys at each level** - category and block names are dictionary keys
-3. **Direct Python mapping** - loads directly as nested dictionaries
+3. **Direct TypeScript mapping** - loads directly as nested objects
 4. **Unified block model** - all content (prompts, characters, scenes) are blocks
 5. **Categories are implicit** - derived from the nested structure
 
@@ -27,10 +27,9 @@ yaml root
             └── stage (e.g., "raw", "refined", "summary", or just "output")
                 ├── input (prompt text with [references])
                 ├── selected (which version is active)
-                └── output
-                    ├── v1: "content..."
-                    ├── v2: "content..."
-                    └── ...
+                ├── v1: "content..."
+                ├── v2: "content..."
+                └── ...
 ```
 
 ---
@@ -53,13 +52,13 @@ blocks:
   prompts:                          # category
     generate_character:             # block name (unique within category)
       output:
+        input: ""
         selected: v1
-        versions:
-          v1: |
-            Create a detailed character sheet including:
-            - Name and aliases
-            - Physical appearance
-            - Personality traits and flaws
+        v1: |
+          Create a detailed character sheet including:
+          - Name and aliases
+          - Physical appearance
+          - Personality traits and flaws
 
   character:                        # category
     alice:                          # block name (unique within category)
@@ -106,7 +105,7 @@ project:
   genre: fantasy
 
 settings:
-  llm_provider: openai-main           # References ~/.storyforge/providers/
+  llm_provider: openai-main           # Named LLM config (stored in localStorage)
   default_reference_mode: summary     # "summary" or "full"
   unresolved_references: block        # "block" or "placeholder"
 ```
@@ -126,30 +125,30 @@ A block is a dictionary of stages. Each stage has:
 
 ### Simple Block (e.g., prompts, static content)
 
-For blocks that don't need stages (like prompt templates or static content), use a single `output` field:
+For blocks that don't need stages (like prompt templates or static content), use a single `output` stage:
 
 ```yaml
 blocks:
   prompts:
     generate_character:             # block name
-      output:
+      output:                       # stage name (acts as a single stage)
+        input: ""
         selected: v1
-        versions:
-          v1: |
-            Create a detailed character sheet including:
-            - Name and aliases
-            - Physical appearance  
-            - Personality traits and flaws
-            - Background and motivations
-          v2: "..."
+        v1: |
+          Create a detailed character sheet including:
+          - Name and aliases
+          - Physical appearance  
+          - Personality traits and flaws
+          - Background and motivations
+        v2: "..."
 
     world_rules:                    # block name
       output:
+        input: ""
         selected: v1
-        versions:
-          v1: |
-            The world is set in a dark fantasy realm where magic is forbidden.
-            Technology is medieval-era. Dragons are extinct but their bones hold power.
+        v1: |
+          The world is set in a dark fantasy realm where magic is forbidden.
+          Technology is medieval-era. Dragons are extinct but their bones hold power.
 ```
 
 ### Block with Stages (e.g., characters, scenes)
@@ -305,45 +304,37 @@ tree:
 
 ---
 
-## Tool-Level Config
+## LLM Configuration
 
-Stored in `~/.storyforge/providers/`:
-
-```yaml
-# ~/.storyforge/providers/openai-main.yaml
-name: openai-main
-provider: openai
-api_key: ${OPENAI_API_KEY}
-default_model: gpt-4o
-default_temperature: 0.8
-```
+LLM configurations are stored in **browser localStorage** (not in the project file), managed via Zustand persist. The project file only stores an optional `llm_provider` reference for portability.
 
 ---
 
-## Python Access
+## TypeScript Access
 
-```python
-import yaml
+```typescript
+import yaml from 'js-yaml';
 
-with open("project.yaml") as f:
-    project = yaml.safe_load(f)
+// Load project
+const project = yaml.load(yamlString) as StoryProject;
 
-# Access block
-alice = project["blocks"]["character"]["alice"]
+// Access block
+const alice = project.blocks.character.alice;
 
-# Get selected output from a stage
-stage = alice["raw"]
-output = stage["output"][stage["selected"]]
+// Get selected output from a stage
+const stage = alice.raw;
+const output = stage[stage.selected];
 
-# Access simple block (like prompts)
-prompt = project["blocks"]["prompts"]["generate_character"]
-prompt_content = prompt["output"]["versions"][prompt["output"]["selected"]]
+// Access simple block (like prompts)
+const prompt = project.blocks.prompts.generate_character;
+const promptContent = prompt.output[prompt.output.selected];
 
-# Iterate all blocks
-for category, blocks in project["blocks"].items():
-    for block_name, block in blocks.items():
-        print(f"[{category}:{block_name}]")
-```
+// Iterate all blocks
+for (const [category, blocks] of Object.entries(project.blocks)) {
+  for (const [blockName, block] of Object.entries(blocks)) {
+    console.log(`[${category}:${blockName}]`);
+  }
+}
 ```
 
 ---

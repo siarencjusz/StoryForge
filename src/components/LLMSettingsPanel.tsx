@@ -40,7 +40,7 @@ export function LLMSettingsPanel({ onClose }: LLMSettingsPanelProps) {
   };
 
   const handleAddConfig = () => {
-    const id = addConfig({
+    const newConfigData = {
       name: 'New LLM',
       endpoint: 'http://127.0.0.1:5000',
       apiKey: '',
@@ -48,11 +48,10 @@ export function LLMSettingsPanel({ onClose }: LLMSettingsPanelProps) {
       maxTokens: 2048,
       temperature: 0.7,
       isActive: false,
-    });
-    const newConfig = configs.find((c) => c.id === id);
-    if (newConfig) {
-      setEditingConfig({ ...newConfig });
-    }
+    };
+    const id = addConfig(newConfigData);
+    // Use the data we already have instead of searching stale closure
+    setEditingConfig({ ...newConfigData, id });
   };
 
   const handleSaveConfig = () => {
@@ -318,8 +317,8 @@ export function LLMSettingsPanel({ onClose }: LLMSettingsPanelProps) {
         {/* Footer */}
         <div className="p-4 border-t border-sf-bg-600">
           <p className="text-xs text-sf-text-400">
-            Configure OpenAI-compatible API endpoints. For local LLMs, use tools like llama.cpp server,
-            Ollama, or LM Studio that expose an OpenAI-compatible API.
+            Configure OpenAI-compatible API endpoints (uses /v1/chat/completions). Works with
+            OpenAI, Ollama, LM Studio, llama.cpp server, vLLM, and other compatible providers.
           </p>
         </div>
       </div>

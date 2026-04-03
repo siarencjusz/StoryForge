@@ -32,7 +32,6 @@ export interface ProjectMeta {
 /** Project settings */
 export interface ProjectSettings {
   llm_provider: string;
-  default_reference_mode: 'summary' | 'full';
 }
 
 /** Tree UI state */

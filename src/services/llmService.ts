@@ -1,6 +1,6 @@
 /**
  * LLM Service - Handles communication with OpenAI-compatible APIs
- * Always uses /v1/completions with a plain prompt string.
+ * Uses /v1/chat/completions with the chat messages format.
  */
 
 import type { LLMConfig } from '../types';
@@ -47,8 +47,40 @@ export interface StreamingResult {
 }
 
 /**
- * Send a streaming completion request to an OpenAI-compatible /v1/completions endpoint.
- * The full prompt is passed as a plain string.
+ * Parse an optional system prompt from the input text.
+ * If the prompt starts with "### SYSTEM:" followed by content and then
+ * "### USER:", the text is split into system and user messages.
+ * Otherwise the entire text is treated as the user message.
+ */
+function parseSystemPrompt(prompt: string): { system?: string; user: string } {
+  const systemTag = '### SYSTEM:';
+  const userTag = '### USER:';
+
+  const trimmed = prompt.trimStart();
+  if (!trimmed.startsWith(systemTag)) {
+    return { user: prompt };
+  }
+
+  const afterSystem = trimmed.slice(systemTag.length);
+  const userIdx = afterSystem.indexOf(userTag);
+  if (userIdx === -1) {
+    // No USER tag — treat everything after SYSTEM tag as system, user is empty
+    return { system: afterSystem.trim(), user: '' };
+  }
+
+  const systemContent = afterSystem.slice(0, userIdx).trim();
+  const userContent = afterSystem.slice(userIdx + userTag.length).trim();
+  return {
+    system: systemContent || undefined,
+    user: userContent,
+  };
+}
+
+/**
+ * Send a streaming chat completion request to an OpenAI-compatible
+ * /v1/chat/completions endpoint. The prompt text is parsed for an
+ * optional "### SYSTEM:" / "### USER:" structure. If present, the
+ * system portion is sent as the system message.
  */
 export async function sendCompletionStreaming(
   config: LLMConfig,
@@ -64,9 +96,19 @@ export async function sendCompletionStreaming(
     headers['Authorization'] = `Bearer ${config.apiKey}`;
   }
 
+  // Parse system prompt from input text
+  const { system, user } = parseSystemPrompt(prompt);
+
+  // Build messages array for chat completions
+  const messages: Array<{ role: string; content: string }> = [];
+  if (system) {
+    messages.push({ role: 'system', content: system });
+  }
+  messages.push({ role: 'user', content: user });
+
   const body: Record<string, unknown> = {
     model: config.model,
-    prompt,
+    messages,
     max_tokens: config.maxTokens,
     temperature: config.temperature,
     stream: true,
@@ -77,7 +119,7 @@ export async function sendCompletionStreaming(
   let fullContent = '';
 
   try {
-    const response = await fetch(`${config.endpoint}/v1/completions`, {
+    const response = await fetch(`${config.endpoint}/v1/chat/completions`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
@@ -111,7 +153,8 @@ export async function sendCompletionStreaming(
         if (trimmed.startsWith('data: ')) {
           try {
             const json = JSON.parse(trimmed.slice(6));
-            const content = json.choices?.[0]?.text ?? undefined;
+            // Chat completions use delta.content for streaming
+            const content = json.choices?.[0]?.delta?.content ?? undefined;
             if (content) {
               fullContent += content;
               onToken(content);

@@ -14,7 +14,6 @@ export const DEFAULT_PROJECT: Project = {
   },
   settings: {
     llm_provider: '',
-    default_reference_mode: 'summary',
   },
   blocks: {
     prompts: {

@@ -2,43 +2,88 @@
 
 This document contains guidelines for AI assistants operating on this project.
 
+## Project Overview
+
+StoryForge is a **tree-based story writing tool with LLM integration**. It is a **pure TypeScript/React frontend application** packaged with Electron for desktop distribution. There is **no Python backend**.
+
+**Tech stack**: React 19 + TypeScript + Vite + Tailwind CSS + Zustand (state) + js-yaml + Electron  
+**Package manager**: npm  
+**Testing**: Vitest  
+**LLM integration**: Direct fetch to OpenAI-compatible `/v1/chat/completions` endpoints (browser-based, no server)  
+**Distribution targets**: Both Electron desktop (Windows + Linux) and static web
+
 ## General Rules
 
-1. **Read documentation first**: Before making changes, review relevant documentation in the `docs/` folder to understand the current state of the project.
+1. **Read documentation first**: Before making changes, review relevant docs in `docs/`.
+2. **Update documentation**: After significant changes, update the relevant docs to reflect the new state.
+3. **This is a TypeScript/React project**: Do NOT use Python, pip, uv, or any Python tooling.
 
-2. **Update documentation**: After significant changes, update the relevant documentation to reflect the new state.
+## Environment & Dependencies
 
-## Python Environment
-
-- **Use `uv` for dependency management**: All Python dependencies must be managed using [uv](https://github.com/astral-sh/uv).
-  - Add dependencies: `uv add <package>`
-  - Remove dependencies: `uv remove <package>`
-  - Sync environment: `uv sync`
-  - Run commands: `uv run <command>`
-  - Do NOT use `pip` directly
+- **Use `npm` for dependency management**:
+  - Install: `npm install <package>`
+  - Remove: `npm uninstall <package>`
+  - Run dev server: `npm run dev`
+  - Build: `npm run build`
+  - Lint: `npm run lint`
+  - Test: `npm test` (single run) or `npm run test:watch` (watch mode)
+  - Electron dev: `npm run electron:dev`
 
 ## Temporary Files
 
-- **Keep temporary files in a dedicated folder**: All temporary files created during development, testing, or agent operations must be stored in the `tmp/` folder at the project root.
-- The `tmp/` folder should be added to `.gitignore`.
-- Clean up temporary files when they are no longer needed.
+- **Keep temporary files in `tmp/`** at the project root.
+- The `tmp/` folder is in `.gitignore`.
+- Clean up temporary files when no longer needed.
 
 ## Documentation
 
-- **Maintain up-to-date documentation**: The `docs/` folder contains the current state of the project.
-- Key documentation files:
-  - `docs/design.md` - Overall design and architecture
-  - `docs/features.md` - Feature descriptions and status
-  - `docs/api.md` - API documentation (when applicable)
-- When implementing new features or making changes, update the relevant documentation.
+- **Maintain up-to-date documentation** in the `docs/` folder:
+  - `docs/design.md` — Overall design and architecture
+  - `docs/decisions.md` — All design decisions and rationale
+  - `docs/status.md` — Development status and completed features
+  - `docs/schemas/schema_v1.md` — YAML schema specification
+  - `docs/todo.md` — Technical debt, bugs, open questions, deferred features
 
 ## Code Style
 
-- Follow PEP 8 guidelines for Python code.
-- Use type hints where appropriate.
-- Write docstrings for public functions and classes.
+- Follow standard TypeScript/React conventions.
+- Use TypeScript types and interfaces for all data structures.
+- Use JSDoc comments for public functions and utilities.
+- Components use functional style with hooks.
+- State management is via Zustand stores with persistence.
+
+## Project Structure
+
+```
+src/
+├── components/          # React components (TreePanel, EditorPanel, DependencyPanel, etc.)
+├── store/               # Zustand stores (projectStore, llmStore, hintsStore)
+├── services/            # API services (llmService)
+├── types/               # TypeScript types (project.ts, llm.ts)
+├── utils/               # Utilities (fileUtils, referenceUtils, tokenUtils, nameValidation)
+│   └── __tests__/       # Unit tests (Vitest)
+├── data/                # Static data (defaultProject)
+├── App.tsx              # Main layout
+├── main.tsx             # Entry point
+└── index.css            # Tailwind styles + component classes
+electron/
+└── main.cjs             # Electron main process
+```
+
+## Key Design Patterns
+
+- **Name validation**: Block, category, and stage names MUST be identifier-safe (`[a-zA-Z_][a-zA-Z0-9_]*`, max 64 chars). Validated in store (defensive) and UI (with error messages). See `src/utils/nameValidation.ts`.
+
+- **Reference syntax**: `[block]`, `[category:block]`, `[category:block:stage]`. Two-part `[a:b]` always resolves as `category:block`. Regex pattern: `REFERENCE_PATTERN` in `referenceUtils.ts`.
+
+- **Rename propagation**: When blocks or categories are renamed, all references across all stage inputs are automatically updated via `propagateBlockRename` / `propagateCategoryRename` in `referenceUtils.ts`.
+
+- **System prompt**: Parsed from input text using `### SYSTEM:` / `### USER:` convention (in `llmService.ts`), NOT stored in LLM config.
 
 ## Before Coding
 
-- Ensure design documents are reviewed and approved before implementing new features.
+- Review relevant docs before implementing new features.
 - Break down large tasks into smaller, manageable pieces.
+- Run `npm run lint` and check for TypeScript errors before committing.
+- Run `npm test` to verify existing tests pass before committing.
+- Check `docs/todo.md` for related known issues before working in an area.

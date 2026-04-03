@@ -1,90 +1,19 @@
 import { ArrowRight, ArrowLeft, Loader2 } from 'lucide-react';
 import { useProjectStore } from '../store/projectStore';
 import { useLLMStore } from '../store/llmStore';
-import { useMemo, useCallback } from 'react';
+import { useMemo } from 'react';
 import { estimateTokens, formatTokenCount } from '../utils/tokenUtils';
-
-// Simple reference parser
-const REFERENCE_PATTERN = /\[([a-zA-Z_][a-zA-Z0-9_]*(?::[a-zA-Z_][a-zA-Z0-9_]*){0,2})]/g;
-
-function parseReferences(text: string): string[] {
-  const matches = text.matchAll(REFERENCE_PATTERN);
-  return [...new Set([...matches].map((m) => m[1]))];
-}
-
-// Check if a reference exists in the project
-function isReferenceValid(
-  ref: string,
-  blocks: Record<string, Record<string, Record<string, { input?: string; selected?: string; output?: Record<string, string> }>>>
-): boolean {
-  const parts = ref.split(':');
-
-  if (parts.length === 1) {
-    // Just block name - search all categories
-    const blockName = parts[0];
-    for (const category of Object.keys(blocks)) {
-      if (blocks[category][blockName]) {
-        return true;
-      }
-    }
-    return false;
-  } else if (parts.length === 2) {
-    // category:block
-    const [category, blockName] = parts;
-    return !!(blocks[category] && blocks[category][blockName]);
-  } else if (parts.length === 3) {
-    // category:block:stage
-    const [category, blockName, stage] = parts;
-    return !!(blocks[category] && blocks[category][blockName] && blocks[category][blockName][stage]);
-  }
-
-  return false;
-}
+import {
+  REFERENCE_PATTERN,
+  parseReferences,
+  isReferenceValid,
+  getReferenceOutput,
+  referencePointsToBlock,
+} from '../utils/referenceUtils';
 
 export function DependencyPanel() {
-  const { selection, getBlock, project, setSelection, getSelectedOutput } = useProjectStore();
+  const { selection, getBlock, project, setSelection } = useProjectStore();
   const { generationState } = useLLMStore();
-
-  // Helper to get the selected output content for a reference
-  const getRefOutputContent = useCallback((ref: string): string | null => {
-    const parts = ref.split(':');
-
-    if (parts.length === 1) {
-      // Just block name - search all categories
-      const blockName = parts[0];
-      for (const [cat, blocks] of Object.entries(project.blocks)) {
-        if (blocks[blockName]) {
-          // Get first stage's selected output
-          const block = blocks[blockName];
-          const stageNames = Object.keys(block);
-          const defaultStage = stageNames.includes('output') ? 'output' :
-                              stageNames.includes('raw') ? 'raw' : stageNames[0];
-          if (defaultStage) {
-            return getSelectedOutput(cat, blockName, defaultStage) ?? null;
-          }
-        }
-      }
-      return null;
-    } else if (parts.length === 2) {
-      // category:block
-      const [cat, blockName] = parts;
-      const block = project.blocks[cat]?.[blockName];
-      if (block) {
-        const stageNames = Object.keys(block);
-        const defaultStage = stageNames.includes('output') ? 'output' :
-                            stageNames.includes('raw') ? 'raw' : stageNames[0];
-        if (defaultStage) {
-          return getSelectedOutput(cat, blockName, defaultStage) ?? null;
-        }
-      }
-      return null;
-    } else if (parts.length === 3) {
-      // category:block:stage
-      const [cat, blockName, stageName] = parts;
-      return getSelectedOutput(cat, blockName, stageName) ?? null;
-    }
-    return null;
-  }, [project.blocks, getSelectedOutput]);
 
   // Calculate dependencies with token counts
   const dependencies = useMemo(() => {
@@ -109,18 +38,18 @@ export function DependencyPanel() {
           if (uses.some(u => u.ref === ref)) continue;
 
           const parts = ref.split(':');
-          const isValid = isReferenceValid(ref, project.blocks);
-          const refContent = getRefOutputContent(ref);
+          const valid = isReferenceValid(ref, project.blocks);
+          const refContent = getReferenceOutput(ref, project.blocks);
           const tokens = refContent ? estimateTokens(refContent) : 0;
 
           totalInputTokens += tokens;
 
           if (parts.length === 1) {
-            uses.push({ ref, block: parts[0], isValid, tokens });
+            uses.push({ ref, block: parts[0], isValid: valid, tokens });
           } else if (parts.length === 2) {
-            uses.push({ ref, category: parts[0], block: parts[1], isValid, tokens });
+            uses.push({ ref, category: parts[0], block: parts[1], isValid: valid, tokens });
           } else if (parts.length === 3) {
-            uses.push({ ref, category: parts[0], block: parts[1], stage: parts[2], isValid, tokens });
+            uses.push({ ref, category: parts[0], block: parts[1], stage: parts[2], isValid: valid, tokens });
           }
         }
       }
@@ -145,14 +74,7 @@ export function DependencyPanel() {
         for (const [stageName, stageData] of Object.entries(blkData)) {
           const refs = parseReferences(stageData.input || '');
           for (const ref of refs) {
-            const parts = ref.split(':');
-            // Check if this reference points to our block
-            if (
-              (parts.length === 1 && parts[0] === block) ||
-              (parts.length === 2 && parts[0] === category && parts[1] === block) ||
-              (parts.length === 2 && parts[0] === block) ||
-              (parts.length === 3 && parts[0] === category && parts[1] === block)
-            ) {
+            if (referencePointsToBlock(ref, category, block)) {
               usedBy.push({ category: cat, block: blkName, stage: stageName });
               break; // Only add once per stage
             }
@@ -163,7 +85,7 @@ export function DependencyPanel() {
 
     return { uses, usedBy, inputTokens: totalInputTokens, outputTokens: totalOutputTokens };
 
-  }, [selection, project.blocks, getBlock, getRefOutputContent]);
+  }, [selection, project.blocks, getBlock]);
 
   if (!selection) {
     return (

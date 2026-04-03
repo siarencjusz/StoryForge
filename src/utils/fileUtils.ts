@@ -28,7 +28,7 @@ export function parseYaml(content: string): Project {
   if (!data.blocks) data.blocks = {};
   if (!data.tree) data.tree = { expanded_categories: [], selected: '' };
   if (!data.settings) {
-    data.settings = { llm_provider: '', default_reference_mode: 'summary' };
+    data.settings = { llm_provider: '' };
   }
   return data;
 }

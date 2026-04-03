@@ -23,7 +23,7 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
     },
-    icon: path.join(__dirname, '../public/icon.png'),
+    icon: path.join(__dirname, '../public/icon.svg'),
     title: 'StoryForge',
   });
 

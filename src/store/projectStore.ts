@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Project, Block, Stage, Selection } from '../types';
+import { isValidName } from '../utils/nameValidation';
+import { propagateBlockRename, propagateCategoryRename, transformAllInputs } from '../utils/referenceUtils';
 
 /** Create empty project state */
 function createEmptyProject(title: string = 'Untitled Project', author: string = ''): Project {
@@ -10,7 +12,6 @@ function createEmptyProject(title: string = 'Untitled Project', author: string =
     project: { title, author },
     settings: {
       llm_provider: '',
-      default_reference_mode: 'summary',
     },
     blocks: {},
     tree: {
@@ -187,6 +188,7 @@ export const useProjectStore = create<ProjectStore>()(
 
   createCategory: (category) => {
     set((state) => {
+      if (!isValidName(category)) return state;
       if (state.project.blocks[category]) return state;
       return {
         project: {
@@ -211,9 +213,17 @@ export const useProjectStore = create<ProjectStore>()(
 
   renameCategory: (oldName, newName) => {
     set((state) => {
+      if (!isValidName(newName)) return state;
       if (!state.project.blocks[oldName] || state.project.blocks[newName]) return state;
 
       const { [oldName]: categoryData, ...rest } = state.project.blocks;
+
+      // Rebuild blocks with new category key, then propagate references
+      const blocksWithNewKey = { ...rest, [newName]: categoryData };
+      const updatedBlocks = transformAllInputs(blocksWithNewKey, (input) =>
+        propagateCategoryRename(input, oldName, newName)
+      );
+
       // Update expanded_categories if needed
       const expandedCategories = state.project.tree.expanded_categories.map((c) =>
         c === oldName ? newName : c
@@ -221,7 +231,7 @@ export const useProjectStore = create<ProjectStore>()(
       return {
         project: {
           ...state.project,
-          blocks: { ...rest, [newName]: categoryData },
+          blocks: updatedBlocks,
           tree: {
             ...state.project.tree,
             expanded_categories: expandedCategories,
@@ -279,6 +289,7 @@ export const useProjectStore = create<ProjectStore>()(
 
   createBlock: (category, name) => {
     set((state) => {
+      if (!isValidName(name)) return state;
       const categoryBlocks = state.project.blocks[category] ?? {};
       if (categoryBlocks[name]) return state; // Block exists
 
@@ -317,17 +328,26 @@ export const useProjectStore = create<ProjectStore>()(
 
   renameBlock: (category, oldName, newName) => {
     set((state) => {
+      if (!isValidName(newName)) return state;
       const categoryBlocks = state.project.blocks[category];
       if (!categoryBlocks?.[oldName] || categoryBlocks[newName]) return state;
 
+      // Rename the key within the category
       const { [oldName]: block, ...rest } = categoryBlocks;
+      const blocksWithNewKey = {
+        ...state.project.blocks,
+        [category]: { ...rest, [newName]: block },
+      };
+
+      // Propagate reference updates across all stage inputs
+      const updatedBlocks = transformAllInputs(blocksWithNewKey, (input) =>
+        propagateBlockRename(input, category, oldName, newName)
+      );
+
       return {
         project: {
           ...state.project,
-          blocks: {
-            ...state.project.blocks,
-            [category]: { ...rest, [newName]: block },
-          },
+          blocks: updatedBlocks,
         },
         isDirty: true,
         selection:
@@ -344,11 +364,11 @@ export const useProjectStore = create<ProjectStore>()(
       const blockData = categoryBlocks?.[name];
       if (!blockData) return state;
 
-      // Find a unique name: "name (copy)", "name (copy 2)", etc.
-      let newName = `${name} (copy)`;
+      // Find a unique valid name: "name_copy", "name_copy_2", etc.
+      let newName = `${name}_copy`;
       let counter = 2;
       while (categoryBlocks[newName]) {
-        newName = `${name} (copy ${counter})`;
+        newName = `${name}_copy_${counter}`;
         counter++;
       }
 
@@ -414,6 +434,7 @@ export const useProjectStore = create<ProjectStore>()(
 
   addStage: (category, block, stage, input = '') => {
     set((state) => {
+      if (!isValidName(stage)) return state;
       const blockData = state.project.blocks[category]?.[block];
       if (!blockData || blockData[stage]) return state;
 
@@ -484,6 +505,7 @@ export const useProjectStore = create<ProjectStore>()(
 
   renameStage: (category, block, oldName, newName) => {
     set((state) => {
+      if (!isValidName(newName)) return state;
       const blockData = state.project.blocks[category]?.[block];
       if (!blockData?.[oldName] || blockData[newName]) return state;
 
