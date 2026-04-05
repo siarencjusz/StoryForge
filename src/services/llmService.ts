@@ -86,7 +86,10 @@ export async function sendCompletionStreaming(
   config: LLMConfig,
   prompt: string,
   onToken: (token: string) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  /** Optional assistant prefill for "continue" mode — sent as an assistant
+   *  message so the LLM continues from where it left off. */
+  assistantPrefill?: string
 ): Promise<StreamingResult> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -105,6 +108,12 @@ export async function sendCompletionStreaming(
     messages.push({ role: 'system', content: system });
   }
   messages.push({ role: 'user', content: user });
+
+  // For "continue" mode, add the existing output as an assistant message
+  // so the LLM understands it should continue from where it left off.
+  if (assistantPrefill) {
+    messages.push({ role: 'assistant', content: assistantPrefill });
+  }
 
   const body: Record<string, unknown> = {
     model: config.model,

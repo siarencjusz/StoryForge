@@ -148,10 +148,11 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
     const version = prep.stage.selected;
     const existingContent = prep.stage.output[version] ?? '';
     generateStreaming(
-      prep.resolved + existingContent,
+      prep.resolved,
       (_token, newContent) => updateVersionContent(category, block, activeStage!, version, existingContent + newContent),
       (content) => updateVersionContent(category, block, activeStage!, version, existingContent + content),
-      (error) => toast.error(`Generation failed: ${error}`)
+      (error) => toast.error(`Generation failed: ${error}`),
+      existingContent
     );
   }, [prepareGeneration, category, block, activeStage, generateStreaming, updateVersionContent]);
 

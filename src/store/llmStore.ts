@@ -45,7 +45,9 @@ interface LLMStore {
     prompt: string,
     onToken: (token: string, fullContent: string) => void,
     onComplete: (content: string) => void,
-    onError: (error: string) => void
+    onError: (error: string) => void,
+    /** Optional assistant prefill for "continue" mode */
+    assistantPrefill?: string
   ) => Promise<void>;
   stopGeneration: () => void;
 }
@@ -116,7 +118,7 @@ export const useLLMStore = create<LLMStore>()(
       },
 
       // Generation (streaming)
-      generateStreaming: async (prompt, onToken, onComplete, onError) => {
+      generateStreaming: async (prompt, onToken, onComplete, onError, assistantPrefill) => {
         const config = get().getActiveConfig();
         if (!config) {
           onError('No active LLM configuration');
@@ -138,7 +140,8 @@ export const useLLMStore = create<LLMStore>()(
               fullContent += token;
               onToken(token, fullContent);
             },
-            abortController.signal
+            abortController.signal,
+            assistantPrefill
           );
           // Store token usage if available from API
           const lastUsage = result.usage ? {
