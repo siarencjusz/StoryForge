@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, GripVertical } from 'lucide-react';
+import { Plus, GripVertical, X } from 'lucide-react';
 import { Hint } from '../Hint';
 import { validateName } from '../../utils/nameValidation';
 import { useDragReorder } from '../../hooks/useDragReorder';
@@ -12,6 +12,7 @@ interface StageTabsProps {
   onStageCreate: (name: string) => void;
   onStageRename: (oldName: string, newName: string) => void;
   onStageReorder: (fromIndex: number, toIndex: number) => void;
+  onStageDelete?: (stage: string) => void;
 }
 
 export function StageTabs({
@@ -21,6 +22,7 @@ export function StageTabs({
   onStageCreate,
   onStageRename,
   onStageReorder,
+  onStageDelete,
 }: StageTabsProps) {
   const [newStageName, setNewStageName] = useState('');
   const [showNewStage, setShowNewStage] = useState(false);
@@ -75,6 +77,31 @@ export function StageTabs({
           >
             <GripVertical size={12} className="text-sf-text-400 opacity-0 group-hover:opacity-100 cursor-grab shrink-0" />
             {stage}
+            {onStageDelete && (
+              <span
+                role="button"
+                tabIndex={0}
+                title={`Delete stage "${stage}"`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (window.confirm(`Delete stage "${stage}"? This cannot be undone.`)) {
+                    onStageDelete(stage);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (window.confirm(`Delete stage "${stage}"? This cannot be undone.`)) {
+                      onStageDelete(stage);
+                    }
+                  }
+                }}
+                className="ml-1 opacity-0 group-hover:opacity-100 text-sf-text-400 hover:text-sf-error rounded cursor-pointer"
+              >
+                <X size={12} />
+              </span>
+            )}
           </button>
         )
       )}

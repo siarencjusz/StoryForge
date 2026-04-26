@@ -424,9 +424,14 @@ export const useProjectStore = create<ProjectStore>()(
   deleteVersion: (category, block, stage, version) => {
     set((state) => {
       const stageData = state.project.blocks[category]?.[block]?.[stage];
-      if (!stageData?.output[version]) return;
+      // Use `in` so empty-string versions can still be deleted
+      if (!stageData || !(version in stageData.output)) return;
       delete stageData.output[version];
-      if (stageData.selected === version) stageData.selected = '';
+      if (stageData.selected === version) {
+        // Pick another version if available, otherwise clear selection
+        const remaining = Object.keys(stageData.output);
+        stageData.selected = remaining[0] ?? '';
+      }
       state.isDirty = true;
     });
   },
@@ -434,7 +439,8 @@ export const useProjectStore = create<ProjectStore>()(
   renameVersion: (category, block, stage, oldName, newName) => {
     set((state) => {
       const stageData = state.project.blocks[category]?.[block]?.[stage];
-      if (!stageData?.output[oldName] || stageData.output[newName] !== undefined) return;
+      // Use `in` so empty-string versions can still be renamed
+      if (!stageData || !(oldName in stageData.output) || newName in stageData.output) return;
 
       const content = stageData.output[oldName];
       delete stageData.output[oldName];

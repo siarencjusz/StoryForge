@@ -288,6 +288,10 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
           if (activeStage === oldName) setActiveStage(newName);
         }}
         onStageReorder={(from, to) => reorderStages(category, block, from, to)}
+        onStageDelete={(stage) => {
+          deleteStage(category, block, stage);
+          if (activeStage === stage) setActiveStage(null);
+        }}
       />
 
       {/* Stage content */}
