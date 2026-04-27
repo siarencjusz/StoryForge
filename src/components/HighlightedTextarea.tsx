@@ -1,11 +1,12 @@
 import { useRef, useLayoutEffect, useEffect, useMemo } from 'react';
-import { getInputSegments } from '../utils/referenceUtils';
+import { getInputSegments, getCommentSegments } from '../utils/referenceUtils';
 import type { Blocks } from '../types';
 
 interface HighlightedTextareaProps {
   value: string;
   onChange: (value: string) => void;
-  blocks: Blocks;
+  /** When omitted, only comment lines are highlighted (used for output textareas). */
+  blocks?: Blocks;
   placeholder?: string;
   className?: string;
 }
@@ -32,7 +33,10 @@ export function HighlightedTextarea({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const segments = useMemo(() => getInputSegments(value, blocks), [value, blocks]);
+  const segments = useMemo(
+    () => (blocks ? getInputSegments(value, blocks) : getCommentSegments(value)),
+    [value, blocks]
+  );
 
   // Auto-resize textarea to content height so it never needs its own scrollbar.
   const resizeTextarea = () => {
@@ -82,6 +86,7 @@ export function HighlightedTextarea({
                   seg.type === 'resolved' ? 'text-green-400'
                   : seg.type === 'ambiguous' ? 'text-amber-400'
                   : seg.type === 'error' ? 'text-red-400'
+                  : seg.type === 'comment' ? 'text-[#484f58] italic'
                   : 'text-sf-text-200'
                 }
               >

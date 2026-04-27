@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Trash2, RefreshCw, X, GripHorizontal, Sparkles, Square, FastForward, Loader2, Eye } from 'lucide-react';
 import { useProjectStore } from '../store/projectStore';
 import { useLLMStore } from '../store/llmStore';
-import { resolveReferences } from '../utils/referenceUtils';
+import { resolveReferences, stripComments } from '../utils/referenceUtils';
 import { estimateTokens, formatTokenCount } from '../utils/tokenUtils';
 import { DEFAULT_STAGE_NAME, nextVersionKey } from '../constants';
 import { toast } from 'sonner';
@@ -97,7 +97,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
       return null;
     }
 
-    const { resolved, errors } = resolveReferences(stage.input, freshBlocks);
+    const { resolved, errors } = resolveReferences(stripComments(stage.input), freshBlocks);
     if (errors.length > 0) {
       toast.error(`Cannot generate: Missing references:\n${errors.join('\n')}`);
       return null;
@@ -170,12 +170,13 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
 
     if (!currentStage) return emptyResult;
 
-    const rawInputTokens = estimateTokens(currentStage.input);
-    const { resolved, references } = resolveReferences(currentStage.input, project.blocks);
+    const stripped = stripComments(currentStage.input);
+    const rawInputTokens = estimateTokens(stripped);
+    const { resolved, references } = resolveReferences(stripped, project.blocks);
     const resolvedInputTokens = estimateTokens(resolved);
 
     const breakdown: Array<{ ref: string; tokens: number }> = [];
-    const inputWithoutRefs = currentStage.input.replace(/\[[^\]]+\]/g, '');
+    const inputWithoutRefs = stripped.replace(/\[[^\]]+\]/g, '');
     const baseTokens = estimateTokens(inputWithoutRefs);
 
     for (const ref of references) {
@@ -188,7 +189,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
     }
 
     const selectedOutput = currentStage.selected ? currentStage.output[currentStage.selected] : '';
-    const outputTokens = estimateTokens(selectedOutput || '');
+    const outputTokens = estimateTokens(stripComments(selectedOutput || ''));
 
     return {
       input: rawInputTokens,
@@ -203,9 +204,10 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
   const promptPreview = useMemo(() => {
     if (!currentStage) return { resolved: '', errors: [], warnings: [], rawInput: '' };
 
-    const { resolved, errors, warnings } = resolveReferences(currentStage.input, project.blocks);
+    const stripped = stripComments(currentStage.input);
+    const { resolved, errors, warnings } = resolveReferences(stripped, project.blocks);
 
-    return { resolved, errors, warnings, rawInput: currentStage.input };
+    return { resolved, errors, warnings, rawInput: stripped };
   }, [currentStage, project.blocks]);
 
   // Version action wrappers (bind category/block/stage context)

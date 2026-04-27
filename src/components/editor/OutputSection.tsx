@@ -1,5 +1,6 @@
 import { Plus, Check, Trash2, X, Columns2, GripVertical } from 'lucide-react';
 import { Hint } from '../Hint';
+import { HighlightedTextarea } from '../HighlightedTextarea';
 import { formatTokenCount } from '../../utils/tokenUtils';
 import { useDragReorder } from '../../hooks/useDragReorder';
 import { useInlineEdit } from '../../hooks/useInlineEdit';
@@ -189,21 +190,21 @@ export function OutputSection({
                     Select
                   </button>
                 </div>
-                <textarea
+                <HighlightedTextarea
                   value={currentStage.output[version] ?? ''}
-                  onChange={(e) => onUpdateContent(version, e.target.value)}
-                  className="textarea w-full flex-1"
+                  onChange={(val) => onUpdateContent(version, val)}
                   placeholder="Content..."
+                  className="w-full flex-1"
                 />
               </div>
             ))}
           </div>
         ) : currentStage.selected && currentStage.output[currentStage.selected] !== undefined ? (
-          <textarea
+          <HighlightedTextarea
             value={currentStage.output[currentStage.selected]}
-            onChange={(e) => onUpdateContent(currentStage.selected, e.target.value)}
-            className="textarea w-full h-full"
+            onChange={(val) => onUpdateContent(currentStage.selected!, val)}
             placeholder="Generated content will appear here..."
+            className="w-full h-full"
           />
         ) : (
           <div className="text-sf-text-400 text-sm text-center py-8">

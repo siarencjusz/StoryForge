@@ -59,7 +59,8 @@ export function getBlockOutput(
   if (stageName) {
     const stage = blockData[stageName];
     if (!stage) return null;
-    return stage.selected ? (stage.output[stage.selected] ?? null) : null;
+    const content = stage.selected ? (stage.output[stage.selected] ?? null) : null;
+    return content === null ? null : stripComments(content);
   }
 
   // Otherwise, try to find default stage using priority list
@@ -69,7 +70,8 @@ export function getBlockOutput(
   if (!targetStage) return null;
 
   const stage = blockData[targetStage];
-  return stage?.selected ? (stage.output[stage.selected] ?? null) : null;
+  const content = stage?.selected ? (stage.output[stage.selected] ?? null) : null;
+  return content === null ? null : stripComments(content);
 }
 
 /**
@@ -337,45 +339,94 @@ export function referencePointsToBlock(
 /** Segment type for highlighted input rendering */
 export interface InputSegment {
   text: string;
-  type: 'plain' | 'resolved' | 'error' | 'ambiguous';
+  type: 'plain' | 'resolved' | 'error' | 'ambiguous' | 'comment';
+}
+
+/**
+ * Comment line pattern: a line starting with `#` (column 0).
+ * The matched text includes the trailing newline (if any) so consecutive
+ * comment lines render as separate comment segments.
+ */
+const COMMENT_LINE_PATTERN = /^#[^\n]*\n?/gm;
+
+/**
+ * Strip comment lines (lines starting with `#`) from text.
+ * Used to omit comments from prompts sent to the LLM and from token counts.
+ */
+export function stripComments(text: string): string {
+  return text.replace(COMMENT_LINE_PATTERN, '');
+}
+
+/**
+ * Split text into segments marking only comment lines (no reference resolution).
+ * Used for highlighting comments in output textareas where `[refs]` are literal.
+ */
+export function getCommentSegments(input: string): InputSegment[] {
+  const segments: InputSegment[] = [];
+  const commentRe = new RegExp(COMMENT_LINE_PATTERN.source, 'gm');
+  let lastIdx = 0;
+  let cm: RegExpExecArray | null;
+  while ((cm = commentRe.exec(input)) !== null) {
+    if (cm.index > lastIdx) {
+      segments.push({ text: input.slice(lastIdx, cm.index), type: 'plain' });
+    }
+    segments.push({ text: cm[0], type: 'comment' });
+    lastIdx = cm.index + cm[0].length;
+  }
+  if (lastIdx < input.length) {
+    segments.push({ text: input.slice(lastIdx), type: 'plain' });
+  }
+  return segments;
 }
 
 /**
  * Split input text into segments with resolution status for highlighting.
- * Each segment is either plain text, a resolved reference, an ambiguous reference, or an unresolved reference.
+ * Each segment is plain text, a resolved/ambiguous/error reference, or a comment line.
  */
 export function getInputSegments(input: string, blocks: Blocks): InputSegment[] {
   const segments: InputSegment[] = [];
-  const pattern = new RegExp(REFERENCE_PATTERN.source, 'g');
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
 
-  while ((match = pattern.exec(input)) !== null) {
-    // Add plain text before this match
-    if (match.index > lastIndex) {
-      segments.push({ text: input.slice(lastIndex, match.index), type: 'plain' });
+  // First pass: split into comment vs non-comment regions, preserving order.
+  const regions: Array<{ text: string; isComment: boolean }> = [];
+  const commentRe = new RegExp(COMMENT_LINE_PATTERN.source, 'gm');
+  let lastIdx = 0;
+  let cm: RegExpExecArray | null;
+  while ((cm = commentRe.exec(input)) !== null) {
+    if (cm.index > lastIdx) {
+      regions.push({ text: input.slice(lastIdx, cm.index), isComment: false });
     }
-
-    // Check if this reference resolves
-    const ref = match[1];
-    const result = resolveReference(ref, blocks);
-
-    let type: InputSegment['type'];
-    if (result.content === null) {
-      type = 'error';
-    } else if (result.warning) {
-      type = 'ambiguous';
-    } else {
-      type = 'resolved';
-    }
-
-    segments.push({ text: match[0], type });
-    lastIndex = match.index + match[0].length;
+    regions.push({ text: cm[0], isComment: true });
+    lastIdx = cm.index + cm[0].length;
+  }
+  if (lastIdx < input.length) {
+    regions.push({ text: input.slice(lastIdx), isComment: false });
   }
 
-  // Add remaining plain text
-  if (lastIndex < input.length) {
-    segments.push({ text: input.slice(lastIndex), type: 'plain' });
+  // Second pass: within non-comment regions, expand references.
+  for (const region of regions) {
+    if (region.isComment) {
+      segments.push({ text: region.text, type: 'comment' });
+      continue;
+    }
+    const pattern = new RegExp(REFERENCE_PATTERN.source, 'g');
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(region.text)) !== null) {
+      if (match.index > lastIndex) {
+        segments.push({ text: region.text.slice(lastIndex, match.index), type: 'plain' });
+      }
+      const ref = match[1];
+      const result = resolveReference(ref, blocks);
+      let type: InputSegment['type'];
+      if (result.content === null) type = 'error';
+      else if (result.warning) type = 'ambiguous';
+      else type = 'resolved';
+      segments.push({ text: match[0], type });
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < region.text.length) {
+      segments.push({ text: region.text.slice(lastIndex), type: 'plain' });
+    }
   }
 
   return segments;
