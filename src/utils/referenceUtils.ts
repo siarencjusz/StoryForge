@@ -343,11 +343,12 @@ export interface InputSegment {
 }
 
 /**
- * Comment line pattern: a line starting with `#` (column 0).
- * The matched text includes the trailing newline (if any) so consecutive
- * comment lines render as separate comment segments.
+ * Comment line pattern: a line starting with a single `#` (column 0).
+ * Lines starting with `##` or more are NOT treated as comments — this lets
+ * markdown-style headings (`## Heading`) pass through to the LLM untouched.
+ * The matched text includes the trailing newline (if any).
  */
-const COMMENT_LINE_PATTERN = /^#[^\n]*\n?/gm;
+const COMMENT_LINE_PATTERN = /^#(?!#)[^\n]*\n?/gm;
 
 /**
  * Strip comment lines (lines starting with `#`) from text.

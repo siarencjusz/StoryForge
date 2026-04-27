@@ -59,6 +59,51 @@ export function HighlightedTextarea({
     return () => observer.disconnect();
   }, []);
 
+  // Ctrl+/ (or Cmd+/) toggles `# ` comment prefix on the selected line(s).
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!(e.key === '/' && (e.ctrlKey || e.metaKey))) return;
+    e.preventDefault();
+
+    const ta = e.currentTarget;
+    const { selectionStart, selectionEnd } = ta;
+
+    // Expand selection to whole-line range.
+    const lineStart = value.lastIndexOf('\n', selectionStart - 1) + 1;
+    let lineEnd = value.indexOf('\n', selectionEnd);
+    if (lineEnd === -1) lineEnd = value.length;
+
+    const block = value.slice(lineStart, lineEnd);
+    const lines = block.split('\n');
+
+    // Toggle: if every non-empty line is already commented (single `#`), uncomment all; else comment all.
+    const nonEmpty = lines.filter(l => l.trim().length > 0);
+    const allCommented = nonEmpty.length > 0 && nonEmpty.every(l => /^\s*#(?!#)/.test(l));
+
+    const newLines = lines.map(line => {
+      if (allCommented) {
+        // Remove leading `# ` or `#` (single hash only)
+        return line.replace(/^(\s*)#(?!#)[ \t]?/, '$1');
+      }
+      // Skip fully empty lines when commenting
+      if (line.length === 0) return line;
+      return `# ${line}`;
+    });
+
+    const newBlock = newLines.join('\n');
+    const newValue = value.slice(0, lineStart) + newBlock + value.slice(lineEnd);
+
+    onChange(newValue);
+
+    // Restore selection across the (possibly resized) block.
+    const newLineEnd = lineStart + newBlock.length;
+    requestAnimationFrame(() => {
+      const cur = textareaRef.current;
+      if (!cur) return;
+      cur.selectionStart = lineStart;
+      cur.selectionEnd = newLineEnd;
+    });
+  };
+
   // Shared typography — must be identical on both elements
   const sharedStyle: React.CSSProperties = {
     lineHeight: '1.5',
@@ -101,6 +146,7 @@ export function HighlightedTextarea({
           ref={textareaRef}
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onKeyDown={handleKeyDown}
           placeholder={placeholder}
           className="textarea w-full resize-none relative z-10"
           style={{
