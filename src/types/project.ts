@@ -12,6 +12,8 @@ export interface Stage {
   input: string;
   selected: string;
   output: VersionOutput;
+  /** Optional reasoning/thinking content per version (for reasoning models) */
+  thinking?: VersionOutput;
 }
 
 /** Block - a dictionary of stages */

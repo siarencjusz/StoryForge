@@ -98,6 +98,7 @@ interface ProjectStore {
   listVersions: (category: string, block: string, stage: string) => string[];
   addVersion: (category: string, block: string, stage: string, version: string, content: string) => void;
   updateVersionContent: (category: string, block: string, stage: string, version: string, content: string) => void;
+  updateVersionThinking: (category: string, block: string, stage: string, version: string, thinking: string) => void;
   selectVersion: (category: string, block: string, stage: string, version: string) => void;
   deleteVersion: (category: string, block: string, stage: string, version: string) => void;
   renameVersion: (category: string, block: string, stage: string, oldName: string, newName: string) => void;
@@ -412,6 +413,16 @@ export const useProjectStore = create<ProjectStore>()(
     });
   },
 
+  updateVersionThinking: (category, block, stage, version, thinking) => {
+    set((state) => {
+      const stageData = state.project.blocks[category]?.[block]?.[stage];
+      if (!stageData) return;
+      if (!stageData.thinking) stageData.thinking = {};
+      stageData.thinking[version] = thinking;
+      state.isDirty = true;
+    });
+  },
+
   selectVersion: (category, block, stage, version) => {
     set((state) => {
       const stageData = state.project.blocks[category]?.[block]?.[stage];
@@ -427,6 +438,7 @@ export const useProjectStore = create<ProjectStore>()(
       // Use `in` so empty-string versions can still be deleted
       if (!stageData || !(version in stageData.output)) return;
       delete stageData.output[version];
+      if (stageData.thinking) delete stageData.thinking[version];
       if (stageData.selected === version) {
         // Pick another version if available, otherwise clear selection
         const remaining = Object.keys(stageData.output);
@@ -445,6 +457,11 @@ export const useProjectStore = create<ProjectStore>()(
       const content = stageData.output[oldName];
       delete stageData.output[oldName];
       stageData.output[newName] = content;
+      if (stageData.thinking && oldName in stageData.thinking) {
+        const t = stageData.thinking[oldName];
+        delete stageData.thinking[oldName];
+        stageData.thinking[newName] = t;
+      }
       if (stageData.selected === oldName) stageData.selected = newName;
       state.isDirty = true;
     });
@@ -455,6 +472,7 @@ export const useProjectStore = create<ProjectStore>()(
       const stageData = state.project.blocks[category]?.[block]?.[stage];
       if (!stageData) return;
       stageData.output = reorderKeys(stageData.output, fromIndex, toIndex);
+      // thinking is keyed independently; no need to reorder
       state.isDirty = true;
     });
   },

@@ -11,6 +11,7 @@ import { HighlightedTextarea } from './HighlightedTextarea';
 import { StageTabs } from './editor/StageTabs';
 import { OutputSection } from './editor/OutputSection';
 import { PromptPreviewModal } from './editor/PromptPreviewModal';
+import { ThinkingPreview } from './editor/ThinkingPreview';
 import { useResize } from '../hooks/useResize';
 import type { Selection } from '../types';
 
@@ -37,6 +38,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
     listVersions,
     addVersion,
     updateVersionContent,
+    updateVersionThinking,
     selectVersion,
     deleteVersion,
     renameVersion,
@@ -117,6 +119,10 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
     selectVersion(category, block, activeStage!, nextVersion);
     setCompareVersions(null);
 
+    // Reset thinking for this new version
+    updateVersionThinking(category, block, activeStage!, nextVersion, '');
+    let accumulatedThinking = '';
+
     generateStreaming(
       prep.resolved,
       (_token, fullContent) => updateVersionContent(category, block, activeStage!, nextVersion, fullContent),
@@ -124,22 +130,35 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
       (error) => {
         toast.error(`Generation failed: ${error}`);
         updateVersionContent(category, block, activeStage!, nextVersion, `[Generation Error: ${error}]`);
+      },
+      undefined,
+      (thinkToken) => {
+        accumulatedThinking += thinkToken;
+        updateVersionThinking(category, block, activeStage!, nextVersion, accumulatedThinking);
       }
     );
-  }, [prepareGeneration, category, block, activeStage, generateStreaming, addVersion, selectVersion, updateVersionContent, listVersions]);
+  }, [prepareGeneration, category, block, activeStage, generateStreaming, addVersion, selectVersion, updateVersionContent, updateVersionThinking, listVersions]);
 
   const handleRegenerate = useCallback(() => {
     const prep = prepareGeneration();
     if (!prep || !prep.stage.selected) return;
 
     const version = prep.stage.selected;
+    updateVersionThinking(category, block, activeStage!, version, '');
+    let accumulatedThinking = '';
+
     generateStreaming(
       prep.resolved,
       (_token, fullContent) => updateVersionContent(category, block, activeStage!, version, fullContent),
       (content) => updateVersionContent(category, block, activeStage!, version, content),
-      (error) => toast.error(`Generation failed: ${error}`)
+      (error) => toast.error(`Generation failed: ${error}`),
+      undefined,
+      (thinkToken) => {
+        accumulatedThinking += thinkToken;
+        updateVersionThinking(category, block, activeStage!, version, accumulatedThinking);
+      }
     );
-  }, [prepareGeneration, category, block, activeStage, generateStreaming, updateVersionContent]);
+  }, [prepareGeneration, category, block, activeStage, generateStreaming, updateVersionContent, updateVersionThinking]);
 
   const handleContinue = useCallback(() => {
     const prep = prepareGeneration();
@@ -147,14 +166,21 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
 
     const version = prep.stage.selected;
     const existingContent = prep.stage.output[version] ?? '';
+    updateVersionThinking(category, block, activeStage!, version, '');
+    let accumulatedThinking = '';
+
     generateStreaming(
       prep.resolved,
       (_token, newContent) => updateVersionContent(category, block, activeStage!, version, existingContent + newContent),
       (content) => updateVersionContent(category, block, activeStage!, version, existingContent + content),
       (error) => toast.error(`Generation failed: ${error}`),
-      existingContent
+      existingContent,
+      (thinkToken) => {
+        accumulatedThinking += thinkToken;
+        updateVersionThinking(category, block, activeStage!, version, accumulatedThinking);
+      }
     );
-  }, [prepareGeneration, category, block, activeStage, generateStreaming, updateVersionContent]);
+  }, [prepareGeneration, category, block, activeStage, generateStreaming, updateVersionContent, updateVersionThinking]);
 
   const isGenerating = generationState.status === 'generating';
 
@@ -405,6 +431,18 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
           >
             <GripHorizontal size={14} className="text-sf-text-400" />
           </div>
+
+          {/* Thinking preview — shown when a reasoning model produced thinking content */}
+          {(() => {
+            const sel = currentStage?.selected;
+            const thinkingContent = sel ? (currentStage?.thinking?.[sel] ?? '') : '';
+            return thinkingContent ? (
+              <ThinkingPreview
+                content={thinkingContent}
+                isStreaming={isGenerating}
+              />
+            ) : null;
+          })()}
 
           {/* Output section */}
           <OutputSection

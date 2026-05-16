@@ -47,7 +47,9 @@ interface LLMStore {
     onComplete: (content: string) => void,
     onError: (error: string) => void,
     /** Optional assistant prefill for "continue" mode */
-    assistantPrefill?: string
+    assistantPrefill?: string,
+    /** Called with incremental thinking/reasoning tokens */
+    onThinkingToken?: (token: string) => void
   ) => Promise<void>;
   stopGeneration: () => void;
 }
@@ -118,7 +120,7 @@ export const useLLMStore = create<LLMStore>()(
       },
 
       // Generation (streaming)
-      generateStreaming: async (prompt, onToken, onComplete, onError, assistantPrefill) => {
+      generateStreaming: async (prompt, onToken, onComplete, onError, assistantPrefill, onThinkingToken) => {
         const config = get().getActiveConfig();
         if (!config) {
           onError('No active LLM configuration');
@@ -127,7 +129,7 @@ export const useLLMStore = create<LLMStore>()(
 
         const abortController = new AbortController();
         set({
-          generationState: { status: 'generating', abortController },
+          generationState: { status: 'generating', abortController, thinkingContent: '' },
         });
 
         let fullContent = '';
@@ -141,9 +143,19 @@ export const useLLMStore = create<LLMStore>()(
               onToken(token, fullContent);
             },
             abortController.signal,
-            assistantPrefill
+            assistantPrefill,
+            onThinkingToken
+              ? (thinkToken) => {
+                  set((state) => ({
+                    generationState: {
+                      ...state.generationState,
+                      thinkingContent: (state.generationState.thinkingContent ?? '') + thinkToken,
+                    },
+                  }));
+                  onThinkingToken(thinkToken);
+                }
+              : undefined
           );
-          // Store token usage if available from API
           const lastUsage = result.usage ? {
             promptTokens: result.usage.promptTokens,
             completionTokens: result.usage.completionTokens,
@@ -153,7 +165,6 @@ export const useLLMStore = create<LLMStore>()(
           onComplete(result.content);
         } catch (error) {
           if (error instanceof LLMCancelledError) {
-            // On cancel, use the partial content from the error (more accurate than our tracked fullContent)
             set({ generationState: { status: 'idle' } });
             onComplete(error.partialContent);
           } else {

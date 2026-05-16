@@ -31,4 +31,5 @@ export interface GenerationState {
   error?: string;
   abortController?: AbortController;
   lastUsage?: TokenUsage;  // Token usage from last generation
+  thinkingContent?: string; // Accumulated thinking/reasoning content during generation
 }

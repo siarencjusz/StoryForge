@@ -39,10 +39,40 @@ export class LLMCancelledError extends Error {
  */
 export interface StreamingResult {
   content: string;
+  thinking?: string;
   usage?: {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
+  };
+}
+
+/**
+ * Parse a raw content string that may contain a `<think>…</think>` block.
+ * Returns the thinking text and the actual (non-thinking) content separately.
+ * Handles the streaming case where `</think>` has not yet arrived.
+ */
+function parseThinkingContent(raw: string): { thinking: string; content: string } {
+  const startTag = '<think>';
+  const endTag = '</think>';
+
+  const thinkStart = raw.indexOf(startTag);
+  if (thinkStart === -1) {
+    return { thinking: '', content: raw };
+  }
+
+  const beforeThink = raw.slice(0, thinkStart);
+  const afterStart = raw.slice(thinkStart + startTag.length);
+  const thinkEnd = afterStart.indexOf(endTag);
+
+  if (thinkEnd === -1) {
+    // Still streaming inside the thinking block
+    return { thinking: afterStart, content: beforeThink };
+  }
+
+  return {
+    thinking: afterStart.slice(0, thinkEnd),
+    content: beforeThink + afterStart.slice(thinkEnd + endTag.length),
   };
 }
 
@@ -89,7 +119,9 @@ export async function sendCompletionStreaming(
   signal?: AbortSignal,
   /** Optional assistant prefill for "continue" mode — sent as an assistant
    *  message so the LLM continues from where it left off. */
-  assistantPrefill?: string
+  assistantPrefill?: string,
+  /** Called with incremental thinking/reasoning tokens (reasoning models only) */
+  onThinkingToken?: (token: string) => void
 ): Promise<StreamingResult> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -125,7 +157,27 @@ export async function sendCompletionStreaming(
   };
 
   // Track content at function scope so it's available even if aborted
-  let fullContent = '';
+  let rawContent = '';       // All delta.content tokens concatenated (may include <think> tags)
+  let fullContent = '';      // Actual (non-thinking) content emitted so far
+  let fullThinking = '';     // Thinking content emitted so far
+  let directThinking = '';   // Thinking from delta.reasoning_content (DeepSeek-style)
+
+  // After each new raw token, re-parse thinking vs content and emit increments.
+  const emitParsed = () => {
+    const { thinking, content } = parseThinkingContent(rawContent);
+
+    if (content.length > fullContent.length) {
+      const inc = content.slice(fullContent.length);
+      fullContent = content;
+      onToken(inc);
+    }
+
+    if (onThinkingToken && thinking.length > fullThinking.length) {
+      const inc = thinking.slice(fullThinking.length);
+      fullThinking = thinking;
+      onThinkingToken(inc);
+    }
+  };
 
   try {
     const response = await fetch(`${config.endpoint}/v1/chat/completions`, {
@@ -162,12 +214,23 @@ export async function sendCompletionStreaming(
         if (trimmed.startsWith('data: ')) {
           try {
             const json = JSON.parse(trimmed.slice(6));
-            // Chat completions use delta.content for streaming
-            const content = json.choices?.[0]?.delta?.content ?? undefined;
-            if (content) {
-              fullContent += content;
-              onToken(content);
+            const delta = json.choices?.[0]?.delta;
+
+            // DeepSeek / OpenAI-compatible reasoning_content field
+            const reasoningToken: string | undefined = delta?.reasoning_content;
+            if (reasoningToken && onThinkingToken) {
+              directThinking += reasoningToken;
+              onThinkingToken(reasoningToken);
             }
+
+            // Regular content — may contain <think>…</think> for models that
+            // embed reasoning inline (e.g. QwQ, local reasoning models)
+            const contentToken: string | undefined = delta?.content;
+            if (contentToken) {
+              rawContent += contentToken;
+              emitParsed();
+            }
+
             // Capture usage if provided (usually in final chunk)
             if (json.usage) {
               usage = {
@@ -202,7 +265,7 @@ export async function sendCompletionStreaming(
         processLines([buffer]);
       }
 
-      return { content: fullContent, usage };
+      return { content: fullContent, thinking: fullThinking || directThinking || undefined, usage };
     } catch (readError) {
       // On abort or error, try to process any remaining buffer
       if (buffer.trim()) {
