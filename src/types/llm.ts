@@ -2,6 +2,14 @@
  * LLM Configuration Types
  */
 
+/**
+ * Reasoning/"thinking" effort for reasoning-capable models.
+ * - 'default': do not send the parameter (let the server/model decide)
+ * - 'none': disable or minimize thinking
+ * - 'low' | 'medium' | 'high': standard OpenAI-compatible effort levels
+ */
+export type ReasoningEffort = 'default' | 'none' | 'low' | 'medium' | 'high';
+
 /** LLM provider configuration */
 export interface LLMConfig {
   id: string;
@@ -11,6 +19,8 @@ export interface LLMConfig {
   model: string;
   maxTokens: number;
   temperature: number;
+  /** Limits how much the model "thinks" before answering (reasoning models). */
+  reasoningEffort?: ReasoningEffort;
   isActive: boolean;
 }
 

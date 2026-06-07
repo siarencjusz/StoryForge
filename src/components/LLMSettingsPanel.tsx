@@ -50,6 +50,7 @@ export function LLMSettingsPanel({ onClose }: LLMSettingsPanelProps) {
       model: 'local-model',
       maxTokens: 2048,
       temperature: 0.7,
+      reasoningEffort: 'default' as const,
       isActive: false,
     };
     const id = addConfig(newConfigData);
@@ -172,12 +173,13 @@ export function LLMSettingsPanel({ onClose }: LLMSettingsPanelProps) {
                           <input
                             type="number"
                             value={editingConfig.maxTokens}
-                            onChange={(e) =>
+                            onChange={(e) => {
+                              const parsed = parseInt(e.target.value, 10);
                               setEditingConfig({
                                 ...editingConfig,
-                                maxTokens: parseInt(e.target.value) || 2048,
-                              })
-                            }
+                                maxTokens: Number.isNaN(parsed) ? 2048 : parsed,
+                              });
+                            }}
                             className="input w-full text-sm"
                             min={1}
                             max={32768}
@@ -188,18 +190,44 @@ export function LLMSettingsPanel({ onClose }: LLMSettingsPanelProps) {
                           <input
                             type="number"
                             value={editingConfig.temperature}
-                            onChange={(e) =>
+                            onChange={(e) => {
+                              const parsed = parseFloat(e.target.value);
                               setEditingConfig({
                                 ...editingConfig,
-                                temperature: parseFloat(e.target.value) || 0.7,
-                              })
-                            }
+                                temperature: Number.isNaN(parsed) ? 0.7 : parsed,
+                              });
+                            }}
                             className="input w-full text-sm"
                             min={0}
                             max={2}
                             step={0.1}
                           />
                         </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-sf-text-400 mb-1">
+                          Thinking Effort
+                        </label>
+                        <select
+                          value={editingConfig.reasoningEffort ?? 'default'}
+                          onChange={(e) =>
+                            setEditingConfig({
+                              ...editingConfig,
+                              reasoningEffort: e.target.value as LLMConfig['reasoningEffort'],
+                            })
+                          }
+                          className="input w-full text-sm"
+                        >
+                          <option value="default">Default (model decides)</option>
+                          <option value="none">None (disable thinking)</option>
+                          <option value="low">Low</option>
+                          <option value="medium">Medium</option>
+                          <option value="high">High</option>
+                        </select>
+                        <p className="mt-1 text-xs text-sf-text-500">
+                          Limits reasoning before answering. Sent as <code>reasoning_effort</code>;
+                          only applies to reasoning-capable models/servers.
+                        </p>
                       </div>
                       <div className="flex justify-end gap-2 mt-3">
                         <button

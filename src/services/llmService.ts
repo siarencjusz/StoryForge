@@ -156,6 +156,12 @@ export async function sendCompletionStreaming(
     stream_options: { include_usage: true },
   };
 
+  // Limit how much reasoning models "think" before answering. Only send the
+  // parameter when explicitly chosen so default behaviour is unchanged.
+  if (config.reasoningEffort && config.reasoningEffort !== 'default') {
+    body.reasoning_effort = config.reasoningEffort;
+  }
+
   // Track content at function scope so it's available even if aborted
   let rawContent = '';       // All delta.content tokens concatenated (may include <think> tags)
   let fullContent = '';      // Actual (non-thinking) content emitted so far

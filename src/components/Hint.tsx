@@ -50,12 +50,8 @@ export function Hint({ hint, children, position = 'bottom', className = '' }: Hi
     };
   }, []);
 
-  // Hide when hints are disabled
-  useEffect(() => {
-    if (!showHints) {
-      setIsVisible(false);
-    }
-  }, [showHints]);
+  // Derive visibility so disabling hints hides the tooltip without an effect
+  const tooltipVisible = isVisible && showHints;
 
   const positionClasses = {
     top: 'bottom-full left-1/2 -translate-x-1/2 mb-2',
@@ -79,7 +75,7 @@ export function Hint({ hint, children, position = 'bottom', className = '' }: Hi
     >
       {children}
 
-      {isVisible && (
+      {tooltipVisible && (
         <div
           className={`absolute z-50 ${positionClasses[position]} pointer-events-none`}
           role="tooltip"

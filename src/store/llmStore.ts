@@ -16,6 +16,7 @@ const DEFAULT_CONFIG: LLMConfig = {
   model: 'local-model',
   maxTokens: 2048,
   temperature: 0.7,
+  reasoningEffort: 'default',
   isActive: true,
 };
 

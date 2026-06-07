@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useRef, useCallback, useMemo } from 'react';
 import { Trash2, RefreshCw, X, GripHorizontal, Sparkles, Square, FastForward, Loader2, Eye } from 'lucide-react';
 import { useProjectStore } from '../store/projectStore';
 import { useLLMStore } from '../store/llmStore';
@@ -50,9 +50,9 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
   // Use override selection if provided, otherwise use store selection
   const selection = selectionOverride !== undefined ? selectionOverride : storeSelection;
 
-  const [activeStage, setActiveStage] = useState<string | null>(null);
+  const [activeStageRaw, setActiveStage] = useState<string | null>(null);
   // Comparison mode: track up to 2 versions for side-by-side view
-  const [compareVersions, setCompareVersions] = useState<[string, string] | null>(null);
+  const [compareVersionsRaw, setCompareVersions] = useState<[string, string] | null>(null);
   // Prompt preview modal
   const [showPromptPreview, setShowPromptPreview] = useState(false);
 
@@ -66,25 +66,32 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
     max: (rect) => rect.height - 150,
   });
 
-  // Reset active stage when selection changes
-  useEffect(() => {
-    setActiveStage(null);
-    setCompareVersions(null);
-  }, [selection?.category, selection?.block]);
-
   // Get stages for current selection
   const stages = selection ? listStages(selection.category, selection.block) : [];
   const category = selection?.category ?? '';
   const block = selection?.block ?? '';
+
+  // Reset/auto-select stage state during render when the selection changes.
+  // Adjusting state here (instead of in an effect) avoids cascading renders.
+  const selectionKey = selection ? `${selection.category}::${selection.block}` : '';
+  const [prevSelectionKey, setPrevSelectionKey] = useState(selectionKey);
+
+  let activeStage = activeStageRaw;
+  let compareVersions = compareVersionsRaw;
+  if (selectionKey !== prevSelectionKey) {
+    setPrevSelectionKey(selectionKey);
+    activeStage = stages.length > 0 ? stages[0] : null;
+    compareVersions = null;
+    setActiveStage(activeStage);
+    setCompareVersions(null);
+  } else if (activeStage === null && stages.length > 0) {
+    // Auto-select the first stage once stages become available
+    activeStage = stages[0];
+    setActiveStage(activeStage);
+  }
+
   const currentStage = activeStage && selection ? getStage(category, block, activeStage) : null;
   const versions = activeStage && selection ? listVersions(category, block, activeStage) : [];
-
-  // Auto-select first stage if none selected
-  useEffect(() => {
-    if (stages.length > 0 && !activeStage) {
-      setActiveStage(stages[0]);
-    }
-  }, [stages, activeStage]);
 
   // Shared generation preamble: validates state, resolves references, returns resolved prompt + stage
   const prepareGeneration = useCallback((): { resolved: string; stage: import('../types').Stage } | null => {
