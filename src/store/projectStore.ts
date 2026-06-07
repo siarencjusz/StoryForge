@@ -99,6 +99,7 @@ interface ProjectStore {
   addVersion: (category: string, block: string, stage: string, version: string, content: string) => void;
   updateVersionContent: (category: string, block: string, stage: string, version: string, content: string) => void;
   updateVersionThinking: (category: string, block: string, stage: string, version: string, thinking: string) => void;
+  setVersionSignature: (category: string, block: string, stage: string, version: string, signature: string) => void;
   selectVersion: (category: string, block: string, stage: string, version: string) => void;
   deleteVersion: (category: string, block: string, stage: string, version: string) => void;
   renameVersion: (category: string, block: string, stage: string, oldName: string, newName: string) => void;
@@ -423,6 +424,16 @@ export const useProjectStore = create<ProjectStore>()(
     });
   },
 
+  setVersionSignature: (category, block, stage, version, signature) => {
+    set((state) => {
+      const stageData = state.project.blocks[category]?.[block]?.[stage];
+      if (!stageData) return;
+      if (!stageData.signatures) stageData.signatures = {};
+      stageData.signatures[version] = signature;
+      state.isDirty = true;
+    });
+  },
+
   selectVersion: (category, block, stage, version) => {
     set((state) => {
       const stageData = state.project.blocks[category]?.[block]?.[stage];
@@ -439,6 +450,7 @@ export const useProjectStore = create<ProjectStore>()(
       if (!stageData || !(version in stageData.output)) return;
       delete stageData.output[version];
       if (stageData.thinking) delete stageData.thinking[version];
+      if (stageData.signatures) delete stageData.signatures[version];
       if (stageData.selected === version) {
         // Pick another version if available, otherwise clear selection
         const remaining = Object.keys(stageData.output);
@@ -461,6 +473,11 @@ export const useProjectStore = create<ProjectStore>()(
         const t = stageData.thinking[oldName];
         delete stageData.thinking[oldName];
         stageData.thinking[newName] = t;
+      }
+      if (stageData.signatures && oldName in stageData.signatures) {
+        const sig = stageData.signatures[oldName];
+        delete stageData.signatures[oldName];
+        stageData.signatures[newName] = sig;
       }
       if (stageData.selected === oldName) stageData.selected = newName;
       state.isDirty = true;

@@ -2,6 +2,7 @@ import { ChevronRight, ChevronDown, Folder, FileText, Plus, PanelRight, Copy, X,
 import { useProjectStore } from '../store/projectStore';
 import { useState, useMemo } from 'react';
 import { validateName } from '../utils/nameValidation';
+import { getBlockStaleness } from '../utils/staleness';
 import { useInlineEdit } from '../hooks/useInlineEdit';
 
 export function TreePanel() {
@@ -404,6 +405,12 @@ export function TreePanel() {
                         <GripVertical size={14} className="text-sf-text-500 shrink-0 cursor-grab opacity-0 group-hover:opacity-100" />
                         <FileText size={16} className={`shrink-0 ${isSecondary ? 'text-sf-accent-400' : 'text-sf-text-400'}`} />
                         <span className="text-sm truncate flex-1">{block}</span>
+                        {getBlockStaleness(project.blocks, category, block) === 'stale' && (
+                          <span
+                            className="w-2 h-2 rounded-full bg-amber-400 shrink-0"
+                            title="This block's output is out of date with its dependencies."
+                          />
+                        )}
                         <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100">
                           <button
                             onClick={(e) => {

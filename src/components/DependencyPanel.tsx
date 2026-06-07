@@ -1,8 +1,10 @@
-import { ArrowRight, ArrowLeft, Loader2 } from 'lucide-react';
+import { ArrowRight, ArrowLeft, Loader2, RefreshCw, Square } from 'lucide-react';
 import { useProjectStore } from '../store/projectStore';
 import { useLLMStore } from '../store/llmStore';
 import { useMemo } from 'react';
 import { estimateTokens, formatTokenCount } from '../utils/tokenUtils';
+import { getBlockStaleness } from '../utils/staleness';
+import { useStaleRegeneration } from '../hooks/useStaleRegeneration';
 import {
   parseReferences,
   stripReferences,
@@ -15,6 +17,7 @@ import {
 export function DependencyPanel() {
   const { selection, getBlock, project, setSelection } = useProjectStore();
   const { generationState } = useLLMStore();
+  const { staleCount, running, run, stop } = useStaleRegeneration();
 
   // Calculate dependencies with token counts
   const dependencies = useMemo(() => {
@@ -151,11 +154,19 @@ export function DependencyPanel() {
                 <button
                   key={idx}
                   onClick={() => setSelection({ category: dep.category, block: dep.block })}
-                  className="block w-full text-left px-2 py-1 text-sm rounded hover:bg-sf-bg-700"
+                  className="flex items-center w-full text-left px-2 py-1 text-sm rounded hover:bg-sf-bg-700"
                 >
-                  <span className="text-sf-text-400">{dep.category}:</span>
-                  <span className="text-sf-text-200">{dep.block}</span>
-                  <span className="text-sf-text-400 text-xs ml-1">({dep.stage})</span>
+                  <span className="flex-1">
+                    <span className="text-sf-text-400">{dep.category}:</span>
+                    <span className="text-sf-text-200">{dep.block}</span>
+                    <span className="text-sf-text-400 text-xs ml-1">({dep.stage})</span>
+                  </span>
+                  {getBlockStaleness(project.blocks, dep.category, dep.block) === 'stale' && (
+                    <span
+                      className="w-2 h-2 rounded-full bg-amber-400 shrink-0"
+                      title="Out of date — depends on a block that changed."
+                    />
+                  )}
                 </button>
               ))}
             </div>
@@ -165,13 +176,43 @@ export function DependencyPanel() {
         </div>
       </div>
 
-      {/* Actions - placeholder for future functionality */}
-      {generationState.status === 'generating' && (
+      {/* Actions */}
+      {generationState.status === 'generating' && !running && (
         <div className="p-3 border-t border-sf-bg-600">
           <div className="flex items-center justify-center gap-2 text-sm text-sf-accent-400">
             <Loader2 size={14} className="animate-spin" />
             <span>Generating...</span>
           </div>
+        </div>
+      )}
+
+      {/* Stale cascade regeneration */}
+      {(staleCount > 0 || running) && (
+        <div className="p-3 border-t border-sf-bg-600 space-y-2">
+          {running ? (
+            <button
+              onClick={stop}
+              className="btn btn-secondary w-full flex items-center justify-center gap-2 text-sf-warning"
+            >
+              <Square size={14} />
+              Stop cascade
+            </button>
+          ) : (
+            <button
+              onClick={run}
+              className="btn btn-secondary w-full flex items-center justify-center gap-2"
+              title="Regenerate every out-of-date output in dependency order"
+            >
+              <RefreshCw size={14} />
+              Regenerate {staleCount} stale output{staleCount === 1 ? '' : 's'}
+            </button>
+          )}
+          {running && (
+            <div className="flex items-center justify-center gap-2 text-xs text-sf-accent-400">
+              <Loader2 size={12} className="animate-spin" />
+              <span>Regenerating in dependency order…</span>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -1,14 +1,17 @@
-import { Plus, Check, Trash2, X, Columns2, GripVertical } from 'lucide-react';
+import { Plus, Check, Trash2, X, Columns2, GripVertical, AlertTriangle } from 'lucide-react';
 import { Hint } from '../Hint';
 import { HighlightedTextarea } from '../HighlightedTextarea';
 import { formatTokenCount } from '../../utils/tokenUtils';
 import { useDragReorder } from '../../hooks/useDragReorder';
 import { useInlineEdit } from '../../hooks/useInlineEdit';
 import type { Stage } from '../../types';
+import type { Staleness } from '../../utils/staleness';
 
 interface OutputSectionProps {
   currentStage: Stage;
   versions: string[];
+  /** Staleness per version key — 'stale' versions get an out-of-date badge. */
+  versionStaleness?: Record<string, Staleness>;
   outputTokenCount: number;
   compareVersions: [string, string] | null;
   onCompareVersionsChange: (versions: [string, string] | null) => void;
@@ -23,6 +26,7 @@ interface OutputSectionProps {
 export function OutputSection({
   currentStage,
   versions,
+  versionStaleness,
   outputTokenCount,
   compareVersions,
   onCompareVersionsChange,
@@ -35,6 +39,9 @@ export function OutputSection({
 }: OutputSectionProps) {
   const edit = useInlineEdit(onRenameVersion);
   const drag = useDragReorder(onReorderVersions);
+
+  const isStale = (version: string) => versionStaleness?.[version] === 'stale';
+  const selectedStale = currentStage.selected ? isStale(currentStage.selected) : false;
 
   const handleVersionClick = (version: string, e: React.MouseEvent) => {
     if (e.shiftKey && versions.length >= 2) {
@@ -93,6 +100,15 @@ export function OutputSection({
               ({formatTokenCount(outputTokenCount)} tokens)
             </span>
           )}
+          {!compareVersions && selectedStale && (
+            <span
+              className="flex items-center gap-1 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-1.5 py-0.5"
+              title="This output is out of date with its input or dependencies. Regenerate to update."
+            >
+              <AlertTriangle size={11} />
+              Stale
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {compareVersions ? (
@@ -143,6 +159,13 @@ export function OutputSection({
             >
               <GripVertical size={10} className="opacity-0 group-hover:opacity-100 cursor-grab shrink-0" />
               {version}
+              {isStale(version) && (
+                <AlertTriangle
+                  size={11}
+                  className="text-amber-400 shrink-0"
+                  aria-label="Out of date"
+                />
+              )}
               {currentStage.selected === version && !compareVersions && <Check size={12} />}
               {isInComparison(version) && <Columns2 size={12} />}
             </button>

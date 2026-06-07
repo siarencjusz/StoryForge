@@ -4,6 +4,8 @@ import { useProjectStore } from '../store/projectStore';
 import { useLLMStore } from '../store/llmStore';
 import { resolveReferences, stripComments } from '../utils/referenceUtils';
 import { estimateTokens, formatTokenCount } from '../utils/tokenUtils';
+import { computeSignature, getVersionStaleness } from '../utils/staleness';
+import type { Staleness } from '../utils/staleness';
 import { DEFAULT_STAGE_NAME, nextVersionKey } from '../constants';
 import { toast } from 'sonner';
 import { Hint } from './Hint';
@@ -39,6 +41,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
     addVersion,
     updateVersionContent,
     updateVersionThinking,
+    setVersionSignature,
     selectVersion,
     deleteVersion,
     renameVersion,
@@ -91,7 +94,10 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
   }
 
   const currentStage = activeStage && selection ? getStage(category, block, activeStage) : null;
-  const versions = activeStage && selection ? listVersions(category, block, activeStage) : [];
+  const versions = useMemo(
+    () => (activeStage && selection ? listVersions(category, block, activeStage) : []),
+    [activeStage, selection, category, block, listVersions]
+  );
 
   // Shared generation preamble: validates state, resolves references, returns resolved prompt + stage
   const prepareGeneration = useCallback((): { resolved: string; stage: import('../types').Stage } | null => {
@@ -121,7 +127,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
     if (!prep) return;
 
     const currentVersions = listVersions(category, block, activeStage!);
-    const nextVersion = nextVersionKey(currentVersions.length);
+    const nextVersion = nextVersionKey(currentVersions);
     addVersion(category, block, activeStage!, nextVersion, '');
     selectVersion(category, block, activeStage!, nextVersion);
     setCompareVersions(null);
@@ -133,7 +139,10 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
     generateStreaming(
       prep.resolved,
       (_token, fullContent) => updateVersionContent(category, block, activeStage!, nextVersion, fullContent),
-      (content) => updateVersionContent(category, block, activeStage!, nextVersion, content),
+      (content) => {
+        updateVersionContent(category, block, activeStage!, nextVersion, content);
+        setVersionSignature(category, block, activeStage!, nextVersion, computeSignature(prep.resolved));
+      },
       (error) => {
         toast.error(`Generation failed: ${error}`);
         updateVersionContent(category, block, activeStage!, nextVersion, `[Generation Error: ${error}]`);
@@ -144,7 +153,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
         updateVersionThinking(category, block, activeStage!, nextVersion, accumulatedThinking);
       }
     );
-  }, [prepareGeneration, category, block, activeStage, generateStreaming, addVersion, selectVersion, updateVersionContent, updateVersionThinking, listVersions]);
+  }, [prepareGeneration, category, block, activeStage, generateStreaming, addVersion, selectVersion, updateVersionContent, updateVersionThinking, setVersionSignature, listVersions]);
 
   const handleRegenerate = useCallback(() => {
     const prep = prepareGeneration();
@@ -157,7 +166,10 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
     generateStreaming(
       prep.resolved,
       (_token, fullContent) => updateVersionContent(category, block, activeStage!, version, fullContent),
-      (content) => updateVersionContent(category, block, activeStage!, version, content),
+      (content) => {
+        updateVersionContent(category, block, activeStage!, version, content);
+        setVersionSignature(category, block, activeStage!, version, computeSignature(prep.resolved));
+      },
       (error) => toast.error(`Generation failed: ${error}`),
       undefined,
       (thinkToken) => {
@@ -165,7 +177,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
         updateVersionThinking(category, block, activeStage!, version, accumulatedThinking);
       }
     );
-  }, [prepareGeneration, category, block, activeStage, generateStreaming, updateVersionContent, updateVersionThinking]);
+  }, [prepareGeneration, category, block, activeStage, generateStreaming, updateVersionContent, updateVersionThinking, setVersionSignature]);
 
   const handleContinue = useCallback(() => {
     const prep = prepareGeneration();
@@ -179,7 +191,10 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
     generateStreaming(
       prep.resolved,
       (_token, newContent) => updateVersionContent(category, block, activeStage!, version, existingContent + newContent),
-      (content) => updateVersionContent(category, block, activeStage!, version, existingContent + content),
+      (content) => {
+        updateVersionContent(category, block, activeStage!, version, existingContent + content);
+        setVersionSignature(category, block, activeStage!, version, computeSignature(prep.resolved));
+      },
       (error) => toast.error(`Generation failed: ${error}`),
       existingContent,
       (thinkToken) => {
@@ -187,7 +202,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
         updateVersionThinking(category, block, activeStage!, version, accumulatedThinking);
       }
     );
-  }, [prepareGeneration, category, block, activeStage, generateStreaming, updateVersionContent, updateVersionThinking]);
+  }, [prepareGeneration, category, block, activeStage, generateStreaming, updateVersionContent, updateVersionThinking, setVersionSignature]);
 
   const isGenerating = generationState.status === 'generating';
 
@@ -233,6 +248,20 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
     };
   }, [currentStage, project.blocks]);
 
+  // Per-version staleness for the current stage (drives the OUTPUT badges)
+  const versionStaleness = useMemo(() => {
+    const map: Record<string, Staleness> = {};
+    if (selection && activeStage) {
+      const stageData = project.blocks[category]?.[block]?.[activeStage];
+      if (stageData) {
+        for (const v of Object.keys(stageData.output)) {
+          map[v] = getVersionStaleness(project.blocks, category, block, activeStage, v);
+        }
+      }
+    }
+    return map;
+  }, [project.blocks, category, block, activeStage, selection]);
+
   // Compute the full prompt preview (what would be sent to LLM)
   const promptPreview = useMemo(() => {
     if (!currentStage) return { resolved: '', errors: [], warnings: [], rawInput: '' };
@@ -250,11 +279,11 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
 
   const handleAddVersion = useCallback(() => {
     if (!activeStage) return;
-    const nextVersion = nextVersionKey(versions.length);
+    const nextVersion = nextVersionKey(versions);
     addVersion(category, block, activeStage, nextVersion, '');
     selectVersion(category, block, activeStage, nextVersion);
     setCompareVersions(null);
-  }, [activeStage, category, block, versions.length, addVersion, selectVersion]);
+  }, [activeStage, category, block, versions, addVersion, selectVersion]);
 
   const handleDeleteVersionAction = useCallback((version: string) => {
     if (activeStage) deleteVersion(category, block, activeStage, version);
@@ -455,6 +484,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
           <OutputSection
             currentStage={currentStage}
             versions={versions}
+            versionStaleness={versionStaleness}
             outputTokenCount={tokenCounts.output}
             compareVersions={compareVersions}
             onCompareVersionsChange={setCompareVersions}

@@ -14,6 +14,9 @@ export interface Stage {
   output: VersionOutput;
   /** Optional reasoning/thinking content per version (for reasoning models) */
   thinking?: VersionOutput;
+  /** Signature (hash) of the resolved prompt each version was generated from.
+   *  Used to detect when an output is stale relative to its inputs/dependencies. */
+  signatures?: VersionOutput;
 }
 
 /** Block - a dictionary of stages */

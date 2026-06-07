@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { ChevronDown, ChevronRight, Brain, Copy, Check } from 'lucide-react';
+import { estimateTokens, formatTokenCount } from '../../utils/tokenUtils';
 
 interface ThinkingPreviewProps {
   content: string;
@@ -60,6 +61,9 @@ export function ThinkingPreview({ content, isStreaming }: ThinkingPreviewProps) 
               <span className="w-1 h-1 rounded-full bg-purple-400 animate-bounce [animation-delay:300ms]" />
             </span>
           )}
+        </span>
+        <span className="text-purple-400/60 font-mono text-[11px]">
+          {formatTokenCount(estimateTokens(content))} tokens
         </span>
         <span className="ml-auto flex items-center gap-1">
           <button
