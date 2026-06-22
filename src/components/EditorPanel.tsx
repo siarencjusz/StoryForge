@@ -1,10 +1,10 @@
 import { useState, useRef, useCallback, useMemo } from 'react';
-import { Trash2, RefreshCw, X, GripHorizontal, Sparkles, Square, FastForward, Loader2, Eye } from 'lucide-react';
+import { Trash2, RefreshCw, X, GripHorizontal, Sparkles, Square, FastForward, Loader2, Eye, ChevronDown, ChevronRight, MessageSquare } from 'lucide-react';
 import { useProjectStore } from '../store/projectStore';
 import { useLLMStore } from '../store/llmStore';
 import { resolveReferences, stripComments } from '../utils/referenceUtils';
 import { estimateTokens, formatTokenCount } from '../utils/tokenUtils';
-import { computeSignature, getVersionStaleness } from '../utils/staleness';
+import { computeSignature, getVersionStaleness, signatureSourceFor } from '../utils/staleness';
 import type { Staleness } from '../utils/staleness';
 import { DEFAULT_STAGE_NAME, nextVersionKey } from '../constants';
 import { toast } from 'sonner';
@@ -34,6 +34,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
     getStage,
     addStage,
     updateStageInput,
+    updateStageSystem,
     deleteStage,
     renameStage,
     reorderStages,
@@ -58,6 +59,8 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
   const [compareVersionsRaw, setCompareVersions] = useState<[string, string] | null>(null);
   // Prompt preview modal
   const [showPromptPreview, setShowPromptPreview] = useState(false);
+  // System prompt field expand/collapse (auto-expands when content exists)
+  const [systemExpanded, setSystemExpanded] = useState(false);
 
   // Resizable input panel
   const containerRef = useRef<HTMLDivElement>(null);
@@ -95,12 +98,17 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
 
   const currentStage = activeStage && selection ? getStage(category, block, activeStage) : null;
   const versions = useMemo(
-    () => (activeStage && selection ? listVersions(category, block, activeStage) : []),
-    [activeStage, selection, category, block, listVersions]
+    () => (activeStage && selection ? Object.keys(project.blocks[category]?.[block]?.[activeStage]?.output ?? {}) : []),
+    [activeStage, selection, category, block, project.blocks]
   );
 
   // Shared generation preamble: validates state, resolves references, returns resolved prompt + stage
-  const prepareGeneration = useCallback((): { resolved: string; stage: import('../types').Stage } | null => {
+  const prepareGeneration = useCallback((): {
+    resolved: string;
+    system?: string;
+    signatureSource: string;
+    stage: import('../types').Stage;
+  } | null => {
     if (!activeStage || !selection) return null;
 
     const freshBlocks = useProjectStore.getState().project.blocks;
@@ -113,12 +121,20 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
     }
 
     const { resolved, errors } = resolveReferences(stripComments(stage.input), freshBlocks);
-    if (errors.length > 0) {
-      toast.error(`Cannot generate: Missing references:\n${errors.join('\n')}`);
+    const { resolved: resolvedSystem, errors: systemErrors } =
+      resolveReferences(stripComments(stage.system ?? ''), freshBlocks);
+    const allErrors = [...errors, ...systemErrors];
+    if (allErrors.length > 0) {
+      toast.error(`Cannot generate: Missing references:\n${allErrors.join('\n')}`);
       return null;
     }
 
-    return { resolved, stage };
+    return {
+      resolved,
+      system: resolvedSystem || undefined,
+      signatureSource: signatureSourceFor(freshBlocks, stage.input, stage.system),
+      stage,
+    };
   }, [activeStage, selection, category, block, getStage, getActiveConfig, setShowSettings]);
 
   // Generation handlers
@@ -141,7 +157,7 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
       (_token, fullContent) => updateVersionContent(category, block, activeStage!, nextVersion, fullContent),
       (content) => {
         updateVersionContent(category, block, activeStage!, nextVersion, content);
-        setVersionSignature(category, block, activeStage!, nextVersion, computeSignature(prep.resolved));
+        setVersionSignature(category, block, activeStage!, nextVersion, computeSignature(prep.signatureSource));
       },
       (error) => {
         toast.error(`Generation failed: ${error}`);
@@ -151,7 +167,8 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
       (thinkToken) => {
         accumulatedThinking += thinkToken;
         updateVersionThinking(category, block, activeStage!, nextVersion, accumulatedThinking);
-      }
+      },
+      prep.system
     );
   }, [prepareGeneration, category, block, activeStage, generateStreaming, addVersion, selectVersion, updateVersionContent, updateVersionThinking, setVersionSignature, listVersions]);
 
@@ -168,14 +185,15 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
       (_token, fullContent) => updateVersionContent(category, block, activeStage!, version, fullContent),
       (content) => {
         updateVersionContent(category, block, activeStage!, version, content);
-        setVersionSignature(category, block, activeStage!, version, computeSignature(prep.resolved));
+        setVersionSignature(category, block, activeStage!, version, computeSignature(prep.signatureSource));
       },
       (error) => toast.error(`Generation failed: ${error}`),
       undefined,
       (thinkToken) => {
         accumulatedThinking += thinkToken;
         updateVersionThinking(category, block, activeStage!, version, accumulatedThinking);
-      }
+      },
+      prep.system
     );
   }, [prepareGeneration, category, block, activeStage, generateStreaming, updateVersionContent, updateVersionThinking, setVersionSignature]);
 
@@ -193,14 +211,15 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
       (_token, newContent) => updateVersionContent(category, block, activeStage!, version, existingContent + newContent),
       (content) => {
         updateVersionContent(category, block, activeStage!, version, existingContent + content);
-        setVersionSignature(category, block, activeStage!, version, computeSignature(prep.resolved));
+        setVersionSignature(category, block, activeStage!, version, computeSignature(prep.signatureSource));
       },
       (error) => toast.error(`Generation failed: ${error}`),
       existingContent,
       (thinkToken) => {
         accumulatedThinking += thinkToken;
         updateVersionThinking(category, block, activeStage!, version, accumulatedThinking);
-      }
+      },
+      prep.system
     );
   }, [prepareGeneration, category, block, activeStage, generateStreaming, updateVersionContent, updateVersionThinking, setVersionSignature]);
 
@@ -264,13 +283,29 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
 
   // Compute the full prompt preview (what would be sent to LLM)
   const promptPreview = useMemo(() => {
-    if (!currentStage) return { resolved: '', errors: [], warnings: [], rawInput: '' };
+    if (!currentStage) return { resolved: '', errors: [], warnings: [], rawInput: '', system: '', rawSystem: '' };
 
     const stripped = stripComments(currentStage.input);
     const { resolved, errors, warnings } = resolveReferences(stripped, project.blocks);
 
-    return { resolved, errors, warnings, rawInput: stripped };
+    const strippedSystem = stripComments(currentStage.system ?? '');
+    const sys = resolveReferences(strippedSystem, project.blocks);
+
+    return {
+      resolved,
+      errors: [...errors, ...sys.errors],
+      warnings: [...warnings, ...sys.warnings],
+      rawInput: stripped,
+      system: sys.resolved,
+      rawSystem: strippedSystem,
+    };
   }, [currentStage, project.blocks]);
+
+  // Token count for the (resolved) system prompt, shown in the System field header
+  const systemTokenCount = useMemo(
+    () => (currentStage?.system ? estimateTokens(promptPreview.system) : 0),
+    [currentStage?.system, promptPreview.system]
+  );
 
   // Version action wrappers (bind category/block/stage context)
   const handleSelectVersion = useCallback((version: string) => {
@@ -361,6 +396,49 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
       {/* Stage content */}
       {currentStage ? (
         <div ref={containerRef} className="flex-1 flex flex-col overflow-hidden">
+          {/* System prompt field (collapsible). Accepts literal text or [references];
+              sent as the chat `system` message. */}
+          {(() => {
+            const hasSystem = !!currentStage.system?.trim();
+            const expanded = systemExpanded || hasSystem;
+            return (
+              <div className="shrink-0 border-b border-sf-bg-600">
+                <button
+                  onClick={() => setSystemExpanded((v) => !v)}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-sf-text-300 hover:bg-sf-bg-700/50"
+                  title="System prompt — sent as the chat system message"
+                >
+                  {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  <MessageSquare size={13} className="text-sf-accent-400" />
+                  SYSTEM
+                  {hasSystem && systemTokenCount > 0 && (
+                    <span className="text-xs text-sf-text-400 font-mono">
+                      ({formatTokenCount(systemTokenCount)} tokens)
+                    </span>
+                  )}
+                  {!expanded && hasSystem && (
+                    <span className="text-xs text-sf-text-500 truncate ml-1 font-normal">
+                      {currentStage.system?.trim()}
+                    </span>
+                  )}
+                </button>
+                {expanded && (
+                  <div className="px-3 pb-3 max-h-40 flex flex-col">
+                    <HighlightedTextarea
+                      value={currentStage.system ?? ''}
+                      onChange={(val) =>
+                        activeStage && updateStageSystem(category, block, activeStage, val)
+                      }
+                      blocks={project.blocks}
+                      placeholder="Optional system prompt. Plain text or [block_name] references. Leave empty for none."
+                      className="w-full flex-1 min-h-[3rem]"
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           {/* Input section - resizable */}
           <div className="flex flex-col shrink-0" style={{ height: inputResize.size }}>
             <div className="flex-1 flex flex-col p-3 overflow-hidden">
@@ -515,6 +593,8 @@ export function EditorPanel({ selectionOverride, onClose, isSecondary }: EditorP
         <PromptPreviewModal
           rawInput={promptPreview.rawInput}
           resolved={promptPreview.resolved}
+          system={promptPreview.system}
+          rawSystem={promptPreview.rawSystem}
           errors={promptPreview.errors}
           warnings={promptPreview.warnings}
           onClose={() => setShowPromptPreview(false)}

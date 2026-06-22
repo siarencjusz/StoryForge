@@ -93,7 +93,7 @@ See [schemas/schema_v1.md](./schemas/schema_v1.md) for complete YAML examples.
 | Token Counting        | Estimated at runtime, displayed in UI             | Approximation based on text, API usage when available      |
 | Streaming             | Server-Sent Events (SSE)                          | Live token display, ability to stop generation             |
 | Unresolved References | Error shown, blocks generation                    | Fail-safe approach                                         |
-| System Prompt         | Parsed from input text (`### SYSTEM:` / `### USER:`) | Allows different system prompts per block/stage goal    |
+| System Prompt         | Dedicated per-stage `system` field (text or `[references]`); legacy `### SYSTEM:` parsing kept as fallback | Structured, composable, clearer than inline parsing |
 
 ### Development
 

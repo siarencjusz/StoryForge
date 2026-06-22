@@ -31,6 +31,18 @@ export function resolvedPromptFor(blocks: Blocks, input: string): string {
   return resolveReferences(stripComments(input), blocks).resolved;
 }
 
+/**
+ * Build the exact string a version's signature is computed from: the resolved
+ * input, prefixed with the resolved system prompt when present. When the stage
+ * has no system prompt the result equals the resolved input alone, so signatures
+ * recorded before the system field existed stay valid (no spurious staleness).
+ */
+export function signatureSourceFor(blocks: Blocks, input: string, system?: string): string {
+  const resolvedInput = resolvedPromptFor(blocks, input);
+  const resolvedSystem = system ? resolveReferences(stripComments(system), blocks).resolved : '';
+  return resolvedSystem ? `### SYSTEM:\n${resolvedSystem}\n### USER:\n${resolvedInput}` : resolvedInput;
+}
+
 /** Staleness of a single output version within a stage. */
 export function getVersionStaleness(
   blocks: Blocks,
@@ -46,7 +58,7 @@ export function getVersionStaleness(
   // No recorded signature (manually authored or pre-feature content) → can't judge.
   if (!signature) return 'unknown';
 
-  const current = computeSignature(resolvedPromptFor(blocks, stageData.input));
+  const current = computeSignature(signatureSourceFor(blocks, stageData.input, stageData.system));
   return current === signature ? 'fresh' : 'stale';
 }
 

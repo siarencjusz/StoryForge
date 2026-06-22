@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   computeSignature,
   resolvedPromptFor,
+  signatureSourceFor,
   getVersionStaleness,
   getStageStaleness,
   getBlockStaleness,
@@ -51,6 +52,30 @@ describe('getVersionStaleness', () => {
     blocks.story.intro.main = stage('original', 'out', blocks);
     blocks.story.intro.main.input = 'edited prompt';
     expect(getVersionStaleness(blocks, 'story', 'intro', 'main', 'v1')).toBe('stale');
+  });
+
+  it("returns 'stale' after the system prompt changes", () => {
+    const blocks: Blocks = { story: { intro: {} } };
+    const input = 'static prompt';
+    blocks.story.intro.main = {
+      input,
+      system: 'You are terse.',
+      selected: 'v1',
+      output: { v1: 'out' },
+      signatures: { v1: computeSignature(signatureSourceFor(blocks, input, 'You are terse.')) },
+    };
+    expect(getVersionStaleness(blocks, 'story', 'intro', 'main', 'v1')).toBe('fresh');
+
+    blocks.story.intro.main.system = 'You are verbose.';
+    expect(getVersionStaleness(blocks, 'story', 'intro', 'main', 'v1')).toBe('stale');
+  });
+
+  it('keeps signatures recorded without a system prompt valid (no spurious staleness)', () => {
+    const blocks: Blocks = { story: { intro: {} } };
+    // Recorded the legacy way (input only) — equals signatureSourceFor with empty system.
+    blocks.story.intro.main = stage('legacy prompt', 'out', blocks);
+    expect(signatureSourceFor(blocks, 'legacy prompt')).toBe(resolvedPromptFor(blocks, 'legacy prompt'));
+    expect(getVersionStaleness(blocks, 'story', 'intro', 'main', 'v1')).toBe('fresh');
   });
 
   it("returns 'stale' when a referenced dependency's output changes", () => {

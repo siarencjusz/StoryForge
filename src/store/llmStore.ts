@@ -50,7 +50,9 @@ interface LLMStore {
     /** Optional assistant prefill for "continue" mode */
     assistantPrefill?: string,
     /** Called with incremental thinking/reasoning tokens */
-    onThinkingToken?: (token: string) => void
+    onThinkingToken?: (token: string) => void,
+    /** Explicit resolved system prompt sent as the chat system message */
+    system?: string
   ) => Promise<void>;
   stopGeneration: () => void;
 }
@@ -121,7 +123,7 @@ export const useLLMStore = create<LLMStore>()(
       },
 
       // Generation (streaming)
-      generateStreaming: async (prompt, onToken, onComplete, onError, assistantPrefill, onThinkingToken) => {
+      generateStreaming: async (prompt, onToken, onComplete, onError, assistantPrefill, onThinkingToken, system) => {
         const config = get().getActiveConfig();
         if (!config) {
           onError('No active LLM configuration');
@@ -155,7 +157,8 @@ export const useLLMStore = create<LLMStore>()(
                   }));
                   onThinkingToken(thinkToken);
                 }
-              : undefined
+              : undefined,
+            system
           );
           const lastUsage = result.usage ? {
             promptTokens: result.usage.promptTokens,

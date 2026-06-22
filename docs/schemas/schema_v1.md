@@ -26,6 +26,7 @@ yaml root
         └── block_name (unique within category)
             └── stage (e.g., "raw", "refined", "summary", or just "output")
                 ├── input (prompt text with [references])
+                ├── system (optional system prompt: text or [references])
                 ├── selected (which version is active)
                 ├── v1: "content..."
                 ├── v2: "content..."
@@ -120,6 +121,7 @@ All content in StoryForge is stored as blocks. Categories emerge naturally from 
 
 A block is a dictionary of stages. Each stage has:
 - **input**: The prompt template with optional `[category:block_name]` references
+- **system** *(optional)*: A system prompt (literal text or `[references]`). When present and non-empty, it is sent as the chat `system` message; otherwise no system message is sent (unless the input uses the legacy `### SYSTEM:` convention).
 - **selected**: Which version to use as output
 - **output**: Dictionary of versions (version key → content string)
 

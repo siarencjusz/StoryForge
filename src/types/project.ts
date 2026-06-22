@@ -10,6 +10,10 @@ export type VersionOutput = Record<string, string>;
 /** Stage within a block */
 export interface Stage {
   input: string;
+  /** Optional system prompt — literal text or `[references]`. Sent as the
+   *  chat `system` message. When empty/absent, no system message is sent
+   *  (unless the input uses the legacy `### SYSTEM:` convention). */
+  system?: string;
   selected: string;
   output: VersionOutput;
   /** Optional reasoning/thinking content per version (for reasoning models) */

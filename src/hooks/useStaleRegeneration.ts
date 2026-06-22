@@ -12,7 +12,7 @@ import { toast } from 'sonner';
 import { useProjectStore } from '../store/projectStore';
 import { useLLMStore } from '../store/llmStore';
 import { resolveReferences, stripComments } from '../utils/referenceUtils';
-import { computeSignature, getStageStaleness, topoSortBlocks, collectStaleStages } from '../utils/staleness';
+import { computeSignature, getStageStaleness, topoSortBlocks, collectStaleStages, signatureSourceFor } from '../utils/staleness';
 
 export function useStaleRegeneration() {
   const staleCount = useProjectStore((s) => collectStaleStages(s.project.blocks).length);
@@ -63,6 +63,15 @@ export function useStaleRegeneration() {
             continue;
           }
 
+          const { resolved: resolvedSystem, errors: systemErrors } =
+            resolveReferences(stripComments(stageData.system ?? ''), blocks);
+          if (systemErrors.length > 0) {
+            toast.error(`Skipped ${category}:${block}:${stage} — missing system references`);
+            continue;
+          }
+
+          const signatureSource = signatureSourceFor(blocks, stageData.input, stageData.system);
+
           let accumulatedThinking = '';
           await new Promise<void>((resolve) => {
             useLLMStore.getState().generateStreaming(
@@ -71,7 +80,7 @@ export function useStaleRegeneration() {
                 store.updateVersionContent(category, block, stage, version, fullContent),
               (content) => {
                 store.updateVersionContent(category, block, stage, version, content);
-                store.setVersionSignature(category, block, stage, version, computeSignature(resolved));
+                store.setVersionSignature(category, block, stage, version, computeSignature(signatureSource));
                 resolve();
               },
               (error) => {
@@ -82,7 +91,8 @@ export function useStaleRegeneration() {
               (thinkToken) => {
                 accumulatedThinking += thinkToken;
                 store.updateVersionThinking(category, block, stage, version, accumulatedThinking);
-              }
+              },
+              resolvedSystem || undefined
             );
           });
 

@@ -458,9 +458,11 @@ interface LLMConfig {
 }
 ```
 
-**System Prompt Convention**:
+**System Prompt**:
 
-System prompts are part of the block input text, not the LLM config. If a stage input starts with `### SYSTEM:` followed by content and then `### USER:`, the text is split into system and user messages for the chat completions API. This allows different system prompts per block/stage goal.
+Each stage has a dedicated, optional **System** field (separate from the input). It accepts either literal text or `[block]` references, which are resolved the same way as the input. When non-empty, its resolved content is sent as the chat `system` message and the input is sent entirely as the `user` message. The field is collapsible in the editor and shows a token count when populated.
+
+For backward compatibility, if the System field is empty the input is still parsed for the legacy `### SYSTEM:` / `### USER:` convention. Editing the System field marks the stage's output stale, just like editing the input.
 
 **Features**:
 - **Multiple Configurations**: Add, edit, delete LLM configurations

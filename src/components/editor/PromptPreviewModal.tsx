@@ -6,12 +6,14 @@ import { Modal } from '../Modal';
 interface PromptPreviewModalProps {
   rawInput: string;
   resolved: string;
+  system?: string;
+  rawSystem?: string;
   errors: string[];
   warnings: string[];
   onClose: () => void;
 }
 
-export function PromptPreviewModal({ rawInput, resolved, errors, warnings, onClose }: PromptPreviewModalProps) {
+export function PromptPreviewModal({ rawInput, resolved, system, rawSystem, errors, warnings, onClose }: PromptPreviewModalProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
   return (
@@ -47,6 +49,21 @@ export function PromptPreviewModal({ rawInput, resolved, errors, warnings, onClo
                   <li key={i}>{warn}</li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {/* Resolved System Prompt (if any) */}
+          {rawSystem?.trim() && (
+            <div>
+              <h3 className="text-sm font-semibold text-sf-text-300 mb-2">
+                System Prompt (references expanded)
+                <span className="ml-2 text-xs font-mono text-sf-text-400">
+                  ~{formatTokenCount(estimateTokens(system ?? ''))} tokens
+                </span>
+              </h3>
+              <pre className="bg-sf-bg-900 rounded p-3 text-sm text-sf-text-200 whitespace-pre-wrap overflow-auto max-h-48 border border-sf-accent-500/30">
+                {system || '(empty)'}
+              </pre>
             </div>
           )}
 

@@ -90,6 +90,7 @@ interface ProjectStore {
   getStage: (category: string, block: string, stage: string) => Stage | undefined;
   addStage: (category: string, block: string, stage: string, input?: string) => void;
   updateStageInput: (category: string, block: string, stage: string, input: string) => void;
+  updateStageSystem: (category: string, block: string, stage: string, system: string) => void;
   deleteStage: (category: string, block: string, stage: string) => void;
   renameStage: (category: string, block: string, oldName: string, newName: string) => void;
   reorderStages: (category: string, block: string, fromIndex: number, toIndex: number) => void;
@@ -352,6 +353,15 @@ export const useProjectStore = create<ProjectStore>()(
       const stageData = state.project.blocks[category]?.[block]?.[stage];
       if (!stageData) return;
       stageData.input = input;
+      state.isDirty = true;
+    });
+  },
+
+  updateStageSystem: (category, block, stage, system) => {
+    set((state) => {
+      const stageData = state.project.blocks[category]?.[block]?.[stage];
+      if (!stageData) return;
+      stageData.system = system;
       state.isDirty = true;
     });
   },

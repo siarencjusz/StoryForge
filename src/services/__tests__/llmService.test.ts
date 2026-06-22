@@ -46,8 +46,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('sendCompletionStreaming reasoning_effort', () => {
-  it('omits reasoning_effort when not configured', async () => {
+describe('sendCompletionStreaming reasoning_effort', () => {  it('omits reasoning_effort when not configured', async () => {
     const getBody = mockFetchCapturingBody();
     await sendCompletionStreaming(baseConfig, 'hi', () => {});
     expect(getBody()).not.toHaveProperty('reasoning_effort');
@@ -75,4 +74,73 @@ describe('sendCompletionStreaming reasoning_effort', () => {
       expect(getBody().reasoning_effort).toBe(effort);
     }
   );
+});
+
+describe('sendCompletionStreaming system prompt', () => {
+  type Msg = { role: string; content: string };
+
+  it('sends an explicit systemOverride as the system message and keeps prompt as user', async () => {
+    const getBody = mockFetchCapturingBody();
+    await sendCompletionStreaming(
+      baseConfig,
+      'Tell me a story.',
+      () => {},
+      undefined,
+      undefined,
+      undefined,
+      'You are a poet.'
+    );
+    const messages = getBody().messages as Msg[];
+    expect(messages).toEqual([
+      { role: 'system', content: 'You are a poet.' },
+      { role: 'user', content: 'Tell me a story.' },
+    ]);
+  });
+
+  it('ignores empty/whitespace systemOverride and sends no system message', async () => {
+    const getBody = mockFetchCapturingBody();
+    await sendCompletionStreaming(
+      baseConfig,
+      'Just the user text.',
+      () => {},
+      undefined,
+      undefined,
+      undefined,
+      '   '
+    );
+    const messages = getBody().messages as Msg[];
+    expect(messages).toEqual([{ role: 'user', content: 'Just the user text.' }]);
+  });
+
+  it('falls back to legacy ### SYSTEM: / ### USER: parsing when no override is given', async () => {
+    const getBody = mockFetchCapturingBody();
+    await sendCompletionStreaming(
+      baseConfig,
+      '### SYSTEM:\nBe terse.\n### USER:\nHello',
+      () => {}
+    );
+    const messages = getBody().messages as Msg[];
+    expect(messages).toEqual([
+      { role: 'system', content: 'Be terse.' },
+      { role: 'user', content: 'Hello' },
+    ]);
+  });
+
+  it('lets an explicit systemOverride take precedence over inline ### SYSTEM:', async () => {
+    const getBody = mockFetchCapturingBody();
+    await sendCompletionStreaming(
+      baseConfig,
+      '### SYSTEM:\nInline system.\n### USER:\nHi',
+      () => {},
+      undefined,
+      undefined,
+      undefined,
+      'Override system.'
+    );
+    const messages = getBody().messages as Msg[];
+    expect(messages[0]).toEqual({ role: 'system', content: 'Override system.' });
+    // The whole prompt (including the inline tags) becomes the user message.
+    expect(messages[1].role).toBe('user');
+    expect(messages[1].content).toContain('### SYSTEM:');
+  });
 });

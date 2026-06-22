@@ -121,7 +121,12 @@ export async function sendCompletionStreaming(
    *  message so the LLM continues from where it left off. */
   assistantPrefill?: string,
   /** Called with incremental thinking/reasoning tokens (reasoning models only) */
-  onThinkingToken?: (token: string) => void
+  onThinkingToken?: (token: string) => void,
+  /** Explicit system prompt. When provided (non-empty), it is sent as the
+   *  system message and `prompt` is treated entirely as the user message.
+   *  When omitted/empty, the prompt is parsed for the legacy
+   *  `### SYSTEM:` / `### USER:` convention for backward compatibility. */
+  systemOverride?: string
 ): Promise<StreamingResult> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -131,8 +136,16 @@ export async function sendCompletionStreaming(
     headers['Authorization'] = `Bearer ${config.apiKey}`;
   }
 
-  // Parse system prompt from input text
-  const { system, user } = parseSystemPrompt(prompt);
+  // Determine the system and user messages. An explicit system override takes
+  // precedence; otherwise fall back to the legacy inline `### SYSTEM:` parsing.
+  let system: string | undefined;
+  let user: string;
+  if (systemOverride && systemOverride.trim()) {
+    system = systemOverride;
+    user = prompt;
+  } else {
+    ({ system, user } = parseSystemPrompt(prompt));
+  }
 
   // Build messages array for chat completions
   const messages: Array<{ role: string; content: string }> = [];
